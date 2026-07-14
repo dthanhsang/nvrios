@@ -417,4 +417,52 @@ class ApiService {
       return false;
     }
   }
+
+  // ========== SETTINGS ==========
+
+  Future<Map<String, dynamic>?> getSettings() async {
+    try {
+      final response = await http.get(
+        Uri.parse("$_baseUrl/api/settings"),
+        headers: _headers,
+      ).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        return jsonDecode(_decodeBody(response));
+      }
+    } catch (e) {
+      print("Error fetching settings: $e");
+    }
+    return null;
+  }
+
+  Future<bool> updateSettings(Map<String, dynamic> settings) async {
+    try {
+      final headers = Map<String, String>.from(_headers);
+      headers["Content-Type"] = "application/json";
+      final response = await http.post(
+        Uri.parse("$_baseUrl/api/settings"),
+        headers: headers,
+        body: jsonEncode(settings),
+      ).timeout(const Duration(seconds: 10));
+      return response.statusCode == 200;
+    } catch (e) {
+      print("Error updating settings: $e");
+      return false;
+    }
+  }
+
+  Future<Map<String, dynamic>?> testGemini() async {
+    try {
+      final response = await http.post(
+        Uri.parse("$_baseUrl/api/settings/test-gemini"),
+        headers: _headers,
+      ).timeout(const Duration(seconds: 25));
+      if (response.statusCode == 200) {
+        return jsonDecode(_decodeBody(response));
+      }
+    } catch (e) {
+      print("Error testing Gemini: $e");
+    }
+    return null;
+  }
 }

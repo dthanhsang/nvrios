@@ -35,6 +35,8 @@ dependencies:
   intl: ^0.19.0
   flutter:
     sdk: flutter
+  webview_flutter_wkwebview: ^3.14.0
+  webview_flutter_android: ^3.16.3
 dev_dependencies:
   flutter_test:
     sdk: flutter
