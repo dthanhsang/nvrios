@@ -166,12 +166,20 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
       final String path = video['cache_url'] ?? video['direct_url'] ?? video['url'];
       setState(() {
         _isTranscoding = false;
-        _resolvedVideoUrl = path.startsWith("http") ? path : "${_apiService.baseUrl}$path";
+        _resolvedVideoUrl = _addTokenToUrl(path.startsWith("http") ? path : "${_apiService.baseUrl}$path");
       });
     } else {
       // Needs transcoding. Check status and start polling.
       _checkCacheAndPlay(video, seekSeconds);
     }
+  }
+
+  String _addTokenToUrl(String url) {
+    if (url.isEmpty) return url;
+    final token = _apiService.sessionToken;
+    if (token.isEmpty) return url;
+    final separator = url.contains('?') ? '&' : '?';
+    return '$url${separator}token=$token';
   }
 
   Future<void> _checkCacheAndPlay(Map<String, dynamic> video, int seekSeconds) async {
@@ -190,7 +198,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
       final String path = status['url'];
       setState(() {
         _isTranscoding = false;
-        _resolvedVideoUrl = path.startsWith("http") ? path : "${_apiService.baseUrl}$path";
+        _resolvedVideoUrl = _addTokenToUrl(path.startsWith("http") ? path : "${_apiService.baseUrl}$path");
       });
       return;
     }
@@ -218,7 +226,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
         final String path = check['url'];
         setState(() {
           _isTranscoding = false;
-          _resolvedVideoUrl = path.startsWith("http") ? path : "${_apiService.baseUrl}$path";
+          _resolvedVideoUrl = _addTokenToUrl(path.startsWith("http") ? path : "${_apiService.baseUrl}$path");
         });
       } else {
         setState(() {

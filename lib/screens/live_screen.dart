@@ -59,13 +59,13 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
     final camId = camera['id'] as int;
     final useHd = forceHd ?? (_hdMode[camId] ?? false);
     final streamSrc = useHd ? src : '${src}_sub';
-    return '$base/stream.html?src=$streamSrc&mode=mse,webrtc';
+    return '$base/stream.html?src=$streamSrc&mode=mse,webrtc&token=${_apiService.sessionToken}';
   }
 
   String _getMjpegStreamUrl(dynamic camera) {
     final base = _apiService.go2rtcUrl;
     final src = camera['go2rtc_src'] as String;
-    return '$base/api/stream.mjpeg?src=${src}_mjpeg';
+    return '$base/api/stream.mjpeg?src=${src}_mjpeg&token=${_apiService.sessionToken}';
   }
 
   void _enterFullscreen(int camId) {

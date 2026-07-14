@@ -17,13 +17,7 @@ class ApiService {
   String get sessionToken => _sessionToken;
 
   /// Get go2rtc base URL for live streaming
-  String get go2rtcUrl {
-    if (_baseUrl.contains('dothanhsang.id.vn')) {
-      return 'https://rtc.dothanhsang.id.vn';
-    }
-    final uri = Uri.parse(_baseUrl);
-    return 'http://${uri.host}:1984';
-  }
+  String get go2rtcUrl => "$_baseUrl/go2rtc";
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
