@@ -1,0 +1,28 @@
+workflows:
+  ios-build:
+    name: iOS Unsigned Build
+    instance_type: mac_mini_m1
+    max_build_duration: 30
+    environment:
+      flutter: 3.19.6
+      xcode: 15.2
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: 'main'
+    scripts:
+      - name: Set up Flutter configuration
+        script: |
+          flutter config --no-analytics
+      - name: Get Flutter packages
+        script: |
+          flutter packages pub get
+      - name: Install CocoaPods dependencies
+        script: |
+          cd ios && pod install
+      - name: Build iOS IPA (Unsigned)
+        script: |
+          flutter build ipa --release --no-codesign
+    artifacts:
+      - build/ios/ipa/*.ipa
