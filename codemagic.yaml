@@ -18,8 +18,15 @@ workflows:
       - name: Get Flutter packages
         script: |
           flutter packages pub get
-      - name: Build iOS IPA (Unsigned)
+      - name: Build iOS Archive
         script: |
           flutter build ipa --release --no-codesign
+      - name: Package Unsigned IPA
+        script: |
+          mkdir -p build/ios/ipa/Payload
+          cp -r build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app build/ios/ipa/Payload/
+          cd build/ios/ipa
+          zip -r Runner.ipa Payload
+          rm -rf Payload
     artifacts:
       - build/ios/ipa/*.ipa
