@@ -113,8 +113,29 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: 32),
-                  // Note: DVR URL input field is completely removed/hidden to protect the link.
-                  // It uses the hardcoded value internally.
+                  TextField(
+                    controller: _serverController,
+                    style: const TextStyle(color: Color(0xFFE2E8F0)),
+                    decoration: InputDecoration(
+                      labelText: "Địa chỉ đầu ghi (Server URL)",
+                      labelStyle: const TextStyle(color: Color(0xFF7E8B9B)),
+                      prefixIcon: const Icon(Icons.dns, color: Color(0xFF7E8B9B)),
+                      filled: true,
+                      fillColor: const Color(0xFF1E2330),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: Color(0xFFFF3B30)),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: Color(0xFF2A2F3A)),
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
                   TextField(
                     controller: _usernameController,
                     style: const TextStyle(color: Color(0xFFE2E8F0)),

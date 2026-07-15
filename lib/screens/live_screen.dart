@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 import '../services/api_service.dart';
 
 class LiveScreen extends StatefulWidget {
@@ -17,10 +16,10 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
   List<dynamic> _cameras = [];
   bool _isLoading = true;
   String? _loadError;
-  int _gridColumns = 2; // 1 = single, 2 = 2x2
-  int? _fullscreenCamId; // null = grid, non-null = single camera fullscreen
-  final Map<int, bool> _hdMode = {}; // camId -> true=HD, false=SD
-  bool _useMjpeg = true; // default MJPEG (smooth, fast, low overhead)
+  int _gridColumns = 2;
+  int? _fullscreenCamId;
+  final Map<int, bool> _hdMode = {};
+  final Map<int, GlobalKey<_MjpegStreamPlayerState>> _mjpegKeys = {};
 
   @override
   bool get wantKeepAlive => true;
@@ -38,28 +37,22 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
     });
     try {
       final cameras = await _apiService.getCameras();
+      if (!mounted) return;
       setState(() {
         _cameras = cameras.where((c) => c['enabled'] == 1 || c['enabled'] == true).toList();
         for (var cam in _cameras) {
-          _hdMode.putIfAbsent(cam['id'], () => false); // default SD for grid
+          _hdMode.putIfAbsent(cam['id'], () => false);
+          _mjpegKeys.putIfAbsent(cam['id'], () => GlobalKey<_MjpegStreamPlayerState>());
         }
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _loadError = e.toString();
         _isLoading = false;
       });
     }
-  }
-
-  String _getStreamUrl(dynamic camera, {bool? forceHd}) {
-    final base = _apiService.go2rtcUrl;
-    final src = camera['go2rtc_src'] as String;
-    final camId = camera['id'] as int;
-    final useHd = forceHd ?? (_hdMode[camId] ?? false);
-    final streamSrc = useHd ? src : '${src}_sub';
-    return '$base/stream.html?src=$streamSrc&mode=mse,webrtc&token=${_apiService.sessionToken}';
   }
 
   String _getMjpegStreamUrl(dynamic camera) {
@@ -71,23 +64,26 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
   void _enterFullscreen(int camId) {
     setState(() {
       _fullscreenCamId = camId;
-      _hdMode[camId] = true; // auto-switch to HD in fullscreen
+      _hdMode[camId] = true;
     });
+    // Rotate to landscape for fullscreen
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
-      DeviceOrientation.portraitUp,
     ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
 
   void _exitFullscreen() {
     setState(() => _fullscreenCamId = null);
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   }
 
   @override
   void dispose() {
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
 
@@ -103,16 +99,6 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
       appBar: AppBar(
         title: const Text("Giám sát trực tiếp"),
         actions: [
-          // Stream type toggle (MJPEG/WebView)
-          IconButton(
-            icon: Icon(_useMjpeg ? Icons.bolt : Icons.slow_motion_video,
-              color: _useMjpeg ? const Color(0xFF4CD964) : const Color(0xFF7E8B9B),
-              size: 20,
-            ),
-            onPressed: () => setState(() => _useMjpeg = !_useMjpeg),
-            tooltip: _useMjpeg ? "Chế độ MJPEG (Mượt) - Chạm để đổi" : "Chế độ WebView (WebRTC) - Chạm để đổi",
-          ),
-          const SizedBox(width: 4),
           // Grid layout toggle
           _buildGridButton(1, Icons.crop_square),
           _buildGridButton(2, Icons.grid_view),
@@ -215,7 +201,6 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
       itemBuilder: (context, index) {
         final camera = _cameras[index];
         final camId = camera['id'] as int;
-        final isHd = _hdMode[camId] ?? false;
 
         return GestureDetector(
           onDoubleTap: () => _enterFullscreen(camId),
@@ -226,33 +211,33 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             child: Stack(
               children: [
-                // Video stream
-                _useMjpeg
-                    ? MjpegStreamPlayer(
-                        url: _getMjpegStreamUrl(camera),
-                        fit: BoxFit.cover,
-                        key: ValueKey('mjpeg_${camId}'),
-                        errorBuilder: (context, error, stackTrace) {
-                          return Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(Icons.error_outline, color: Color(0xFFFF3B30), size: 28),
-                                const SizedBox(height: 6),
-                                Text(
-                                  "Lỗi tải luồng MJPEG\n$error",
-                                  style: const TextStyle(color: Color(0xFF7E8B9B), fontSize: 10),
-                                  textAlign: TextAlign.center,
-                                ),
-                              ],
+                // MJPEG stream - uses GlobalKey to preserve state across tab switches
+                MjpegStreamPlayer(
+                  key: _mjpegKeys[camId],
+                  url: _getMjpegStreamUrl(camera),
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.error_outline, color: Color(0xFFFF3B30), size: 28),
+                          const SizedBox(height: 6),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            child: Text(
+                              "Lỗi kết nối\n$error",
+                              style: const TextStyle(color: Color(0xFF7E8B9B), fontSize: 10),
+                              textAlign: TextAlign.center,
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                          );
-                        },
-                      )
-                    : _Go2rtcWebView(
-                        url: _getStreamUrl(camera),
-                        key: ValueKey('cam_${camId}_${isHd ? "hd" : "sd"}'),
+                          ),
+                        ],
                       ),
+                    );
+                  },
+                ),
                 // Top overlay - camera name + controls
                 Positioned(
                   top: 0, left: 0, right: 0,
@@ -295,24 +280,6 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        // HD/SD toggle
-                        GestureDetector(
-                          onTap: () => setState(() => _hdMode[camId] = !isHd),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: isHd ? const Color(0xFFFF3B30) : const Color(0x66FFFFFF),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              isHd ? "HD" : "SD",
-                              style: const TextStyle(
-                                color: Colors.white, fontSize: 9, fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 4),
                         // Fullscreen button
                         GestureDetector(
                           onTap: () => _enterFullscreen(camId),
@@ -356,28 +323,26 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
         backgroundColor: Colors.black,
         body: Stack(
           children: [
-            // Full-screen video
+            // Full-screen video - portrait, use InteractiveViewer for pinch-to-zoom
             Positioned.fill(
-              child: _useMjpeg
-                  ? InteractiveViewer(
-                      child: MjpegStreamPlayer(
-                        url: _getMjpegStreamUrl(camera),
-                        fit: BoxFit.contain,
-                        key: ValueKey('mjpeg_fs_${camera['id']}'),
-                        errorBuilder: (context, error, stackTrace) {
-                          return Center(
-                            child: Text(
-                              "Lỗi tải luồng MJPEG\n$error",
-                              style: const TextStyle(color: Color(0xFFFF3B30)),
-                            ),
-                          );
-                        },
+              child: InteractiveViewer(
+                minScale: 1.0,
+                maxScale: 4.0,
+                child: MjpegStreamPlayer(
+                  url: _getMjpegStreamUrl(camera),
+                  fit: BoxFit.contain,
+                  key: ValueKey('mjpeg_fs_${camera['id']}'),
+                  errorBuilder: (context, error, stackTrace) {
+                    return Center(
+                      child: Text(
+                        "Lỗi tải luồng MJPEG\n$error",
+                        style: const TextStyle(color: Color(0xFFFF3B30)),
+                        textAlign: TextAlign.center,
                       ),
-                    )
-                  : _Go2rtcWebView(
-                      url: _getStreamUrl(camera, forceHd: true),
-                      key: ValueKey('fullscreen_${camera['id']}'),
-                    ),
+                    );
+                  },
+                ),
+              ),
             ),
             // Top overlay bar
             Positioned(
@@ -418,7 +383,7 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
                           children: [
                             Icon(Icons.circle, color: Colors.white, size: 8),
                             SizedBox(width: 4),
-                            Text("LIVE HD", style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+                            Text("LIVE", style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
                           ],
                         ),
                       ),
@@ -430,102 +395,6 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
           ],
         ),
       ),
-    );
-  }
-}
-
-/// WebView widget that loads go2rtc stream player
-class _Go2rtcWebView extends StatefulWidget {
-  final String url;
-  const _Go2rtcWebView({super.key, required this.url});
-
-  @override
-  State<_Go2rtcWebView> createState() => _Go2rtcWebViewState();
-}
-
-class _Go2rtcWebViewState extends State<_Go2rtcWebView> {
-  late final WebViewController _controller;
-  bool _isLoading = true;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(Colors.black)
-      ..setNavigationDelegate(NavigationDelegate(
-        onPageFinished: (_) {
-          if (mounted) setState(() => _isLoading = false);
-          // Clean up go2rtc UI, make video fill container, auto-play muted
-          _controller.runJavaScript('''
-            document.body.style.margin = '0';
-            document.body.style.padding = '0';
-            document.body.style.overflow = 'hidden';
-            document.body.style.backgroundColor = '#000';
-            var video = document.querySelector('video');
-            if (video) {
-              video.style.width = '100%';
-              video.style.height = '100%';
-              video.style.objectFit = 'contain';
-              video.muted = true;
-              video.playsInline = true;
-              video.autoplay = true;
-              video.play().catch(function(){});
-            }
-            // Hide non-video UI elements (buttons, dropdowns)
-            var btns = document.querySelectorAll('button, select, input');
-            btns.forEach(function(el){ el.style.display = 'none'; });
-          ''');
-        },
-        onWebResourceError: (error) {
-          if (mounted) {
-            setState(() {
-              _error = error.description;
-              _isLoading = false;
-            });
-          }
-        },
-      ))
-      ..loadRequest(Uri.parse(widget.url));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_error != null) {
-      return Container(
-        color: Colors.black,
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.error_outline, color: Color(0xFFFF3B30), size: 28),
-              const SizedBox(height: 6),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Text(_error!,
-                  style: const TextStyle(color: Color(0xFF7E8B9B), fontSize: 10),
-                  textAlign: TextAlign.center,
-                  maxLines: 2, overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return Stack(
-      children: [
-        WebViewWidget(controller: _controller),
-        if (_isLoading)
-          Container(
-            color: Colors.black,
-            child: const Center(
-              child: CircularProgressIndicator(color: Color(0xFFFF3B30), strokeWidth: 2),
-            ),
-          ),
-      ],
     );
   }
 }
@@ -548,14 +417,18 @@ class MjpegStreamPlayer extends StatefulWidget {
   State<MjpegStreamPlayer> createState() => _MjpegStreamPlayerState();
 }
 
-class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> {
+class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> with AutomaticKeepAliveClientMixin {
   Uint8List? _frameBytes;
   StreamSubscription? _subscription;
   HttpClient? _client;
   Object? _error;
   bool _isLoading = true;
   int _retryCount = 0;
-  static const int _maxRetries = 3;
+  static const int _maxRetries = 5;
+  Timer? _retryTimer;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -575,6 +448,7 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> {
 
   @override
   void dispose() {
+    _retryTimer?.cancel();
     _stopStreaming();
     super.dispose();
   }
@@ -583,13 +457,11 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> {
     if (!mounted) return;
     setState(() {
       _error = null;
-      _frameBytes = null;
-      _isLoading = true;
+      _isLoading = _frameBytes == null; // Only show loading if no previous frame
     });
 
     _client = HttpClient();
-    _client!.connectionTimeout = const Duration(seconds: 10);
-    // Allow self-signed certificates (important for local network on iOS)
+    _client!.connectionTimeout = const Duration(seconds: 15);
     _client!.badCertificateCallback = (cert, host, port) => true;
 
     _client!.getUrl(Uri.parse(widget.url)).then((HttpClientRequest request) {
@@ -608,17 +480,22 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> {
 
           while (true) {
             if (buffer.length < 10) break;
-            
-            // Search for JPEG SOI marker (0xFF 0xD8) as a fallback detection method
-            // Primary: Content-Length header parsing
-            final maxScan = buffer.length > 2000 ? 2000 : buffer.length;
+
+            // Search for Content-Length header in multipart boundary
+            final maxScan = buffer.length > 4000 ? 4000 : buffer.length;
             final str = String.fromCharCodes(buffer.sublist(0, maxScan));
             final lowerStr = str.toLowerCase();
             final lenIdx = lowerStr.indexOf('content-length:');
             if (lenIdx == -1) {
-              // If we have accumulated too much data but no header, clear buffer to prevent OOM
-              if (buffer.length > 131072) {
-                buffer.clear();
+              // Prevent OOM - if too much data and no header, try to find JPEG markers
+              if (buffer.length > 262144) {
+                // Try to find the last boundary marker and keep only from there
+                final boundaryStr = lowerStr.lastIndexOf('--');
+                if (boundaryStr > 0) {
+                  buffer = buffer.sublist(boundaryStr);
+                } else {
+                  buffer.clear();
+                }
               }
               break;
             }
@@ -628,8 +505,8 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> {
 
             final lenStr = str.substring(lenIdx + 15, lineEndIdx).trim();
             final contentLength = int.tryParse(lenStr);
-            if (contentLength == null) {
-              buffer = buffer.sublist(lineEndIdx);
+            if (contentLength == null || contentLength <= 0) {
+              buffer = buffer.sublist(lineEndIdx + 2);
               continue;
             }
 
@@ -639,67 +516,45 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> {
             final payloadStartIdx = headerEndIdx + 4;
             final payloadEndIdx = payloadStartIdx + contentLength;
 
-            if (buffer.length < payloadEndIdx) {
-              break;
-            }
+            if (buffer.length < payloadEndIdx) break;
 
             final frame = Uint8List.fromList(buffer.sublist(payloadStartIdx, payloadEndIdx));
-            if (mounted) {
+            if (mounted && frame.length > 2 && frame[0] == 0xFF && frame[1] == 0xD8) {
               setState(() {
                 _frameBytes = frame;
                 _error = null;
                 _isLoading = false;
               });
-              _retryCount = 0; // Reset retry count on successful frame
+              _retryCount = 0;
             }
 
             buffer = buffer.sublist(payloadEndIdx);
           }
         },
-        onError: (err) {
-          if (mounted) {
-            if (_retryCount < _maxRetries) {
-              _retryCount++;
-              _stopStreaming();
-              Future.delayed(Duration(seconds: _retryCount), () {
-                if (mounted) _startStreaming();
-              });
-            } else {
-              setState(() {
-                _error = err;
-                _isLoading = false;
-              });
-            }
-          }
-        },
-        onDone: () {
-          // Stream ended unexpectedly - auto-retry
-          if (mounted && _retryCount < _maxRetries) {
-            _retryCount++;
-            _stopStreaming();
-            Future.delayed(Duration(seconds: _retryCount), () {
-              if (mounted) _startStreaming();
-            });
-          }
-        },
+        onError: (err) => _handleStreamError(err),
+        onDone: () => _handleStreamError('Stream ended'),
         cancelOnError: false,
       );
     }).catchError((err) {
-      if (mounted) {
-        if (_retryCount < _maxRetries) {
-          _retryCount++;
-          _stopStreaming();
-          Future.delayed(Duration(seconds: _retryCount), () {
-            if (mounted) _startStreaming();
-          });
-        } else {
-          setState(() {
-            _error = err;
-            _isLoading = false;
-          });
-        }
-      }
+      _handleStreamError(err);
+      return null;
     });
+  }
+
+  void _handleStreamError(dynamic err) {
+    if (!mounted) return;
+    if (_retryCount < _maxRetries) {
+      _retryCount++;
+      _stopStreaming();
+      _retryTimer = Timer(Duration(seconds: _retryCount.clamp(1, 5)), () {
+        if (mounted) _startStreaming();
+      });
+    } else {
+      setState(() {
+        _error = err;
+        _isLoading = false;
+      });
+    }
   }
 
   void _stopStreaming() {
@@ -713,14 +568,36 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> {
 
   @override
   Widget build(BuildContext context) {
-    if (_error != null) {
+    super.build(context);
+
+    if (_error != null && _frameBytes == null) {
       if (widget.errorBuilder != null) {
         return widget.errorBuilder!(context, _error!, null);
       }
       return Center(
-        child: Text(
-          'Error: $_error',
-          style: const TextStyle(color: Colors.red),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, color: Color(0xFFFF3B30), size: 28),
+            const SizedBox(height: 6),
+            Text('Lỗi: $_error', style: const TextStyle(color: Colors.red, fontSize: 11),
+              textAlign: TextAlign.center),
+            const SizedBox(height: 8),
+            GestureDetector(
+              onTap: () {
+                _retryCount = 0;
+                _startStreaming();
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFF3B30),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text("Thử lại", style: TextStyle(color: Colors.white, fontSize: 11)),
+              ),
+            ),
+          ],
         ),
       );
     }

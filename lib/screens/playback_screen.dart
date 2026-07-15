@@ -483,7 +483,8 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
                     ? Container(color: Colors.black)
                     : _PlaybackWebView(
                         key: ValueKey('play_${_selectedCamId}_${video['filename']}_${seekDiff}_$_resolvedVideoUrl'),
-                        videoUrl: _resolvedVideoUrl! + (seekDiff > 0 ? "?ss=$seekDiff" : ""),
+                        videoUrl: _resolvedVideoUrl!,
+                        seekSeconds: seekDiff,
                         cookie: cookie,
                         baseUrl: _apiService.baseUrl,
                         sessionToken: _apiService.sessionToken,
@@ -802,6 +803,7 @@ class _TimelinePainter extends CustomPainter {
 // ===== PLAYBACK WEBVIEW =====
 class _PlaybackWebView extends StatefulWidget {
   final String videoUrl;
+  final int seekSeconds;
   final String cookie;
   final String baseUrl;
   final String sessionToken;
@@ -811,6 +813,7 @@ class _PlaybackWebView extends StatefulWidget {
   const _PlaybackWebView({
     super.key,
     required this.videoUrl,
+    required this.seekSeconds,
     required this.cookie,
     required this.baseUrl,
     required this.sessionToken,
@@ -882,61 +885,20 @@ class _PlaybackWebViewState extends State<_PlaybackWebView> {
         onPageFinished: (_) {
           if (mounted) setState(() => _isLoading = false);
         },
-      ))
-      ..loadHtmlString(_buildPlayerHtml(), baseUrl: widget.baseUrl);
-  }
+      ));
 
-  String _buildPlayerHtml() {
-    // Use both document.cookie (for Android WebView) and rely on
-    // WebViewCookieManager (for iOS WKWebView) set in initState
-    return '''
-<!DOCTYPE html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<script>
-  // Set cookie via JS as fallback (works on Android WebView)
-  document.cookie = "${widget.cookie}; path=/; SameSite=Lax";
-</script>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #000; width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-  video { width: 100%; height: 100%; object-fit: contain; }
-  .error { color: #FF3B30; font-family: -apple-system, sans-serif; font-size: 13px; text-align: center; padding: 20px; }
-</style>
-</head>
-<body>
-  <video id="player" controls playsinline webkit-playsinline autoplay></video>
-  <script>
-    var v = document.getElementById('player');
-    v.src = "${widget.videoUrl}";
-    
-    // iOS requires user gesture for autoplay; try anyway
-    var playPromise = v.play();
-    if (playPromise !== undefined) {
-      playPromise.catch(function(e) {
-        console.log('Autoplay blocked:', e);
-        // On iOS, mute and try again
-        v.muted = true;
-        v.play().catch(function(){});
-      });
-    }
-    
-    v.addEventListener('ended', function() {
-      if (window.Flutter) Flutter.postMessage('ended');
-    });
-    v.addEventListener('timeupdate', function() {
-      if (window.Flutter) Flutter.postMessage('time:' + v.currentTime.toFixed(1));
-    });
-    v.addEventListener('error', function(e) {
-      var msg = 'Video error';
-      if (v.error) msg += ': ' + v.error.message;
-      document.body.innerHTML = '<div class="error">' + msg + '</div>';
-    });
-  </script>
-</body>
-</html>
-''';
+    final playerUrl = "${widget.baseUrl}/api/playback/player"
+        "?video_url=${Uri.encodeComponent(widget.videoUrl)}"
+        "&seek_seconds=${widget.seekSeconds}"
+        "&token=${widget.sessionToken}";
+
+    _controller.loadRequest(
+      Uri.parse(playerUrl),
+      headers: {
+        'Bypass-Tunnel-Reminder': 'true',
+        'X-DVR-Token': widget.sessionToken,
+      },
+    );
   }
 
   @override
