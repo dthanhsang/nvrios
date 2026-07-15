@@ -32,8 +32,12 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
   String? _resolvedVideoUrl;
 
   // Timeline state
-  double _timelineZoom = 1.0; // 1 = 24h view, 4 = 6h, 24 = 1h
+  double _timelineZoom = 1.0;
   double _currentPlaySeconds = 0;
+
+  // Track what was loaded into the WebView to avoid re-creation
+  String? _loadedVideoUrl;
+  int _loadedSeekSeconds = 0;
 
   @override
   bool get wantKeepAlive => true;
@@ -72,11 +76,11 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
       _currentPlaySeconds = 0;
       _isTranscoding = false;
       _resolvedVideoUrl = null;
+      _loadedVideoUrl = null;
     });
 
     try {
       final dateStr = _formatDate(date);
-      // Run concurrent requests
       final results = await Future.wait([
         _apiService.getPlaybackDates(camId),
         _apiService.getPlaybackVideos(camId, dateStr),
@@ -155,21 +159,27 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
     _transcodeTimer?.cancel();
     final video = Map<String, dynamic>.from(_videos[index]);
 
+    final double startSecs = (video['start_seconds'] ?? 0).toDouble();
+
     setState(() {
       _playingIndex = index;
-      _currentPlaySeconds = (video['start_seconds'] ?? 0).toDouble() + seekSeconds;
+      _currentPlaySeconds = startSecs + seekSeconds;
+      _loadedVideoUrl = null; // Reset to trigger new load
+      _resolvedVideoUrl = null;
     });
 
     final isDirect = _checkCanPlayDirect(video);
 
     if (isDirect) {
       final String path = video['cache_url'] ?? video['direct_url'] ?? video['url'];
+      final fullUrl = _addTokenToUrl(path.startsWith("http") ? path : "${_apiService.baseUrl}$path");
       setState(() {
         _isTranscoding = false;
-        _resolvedVideoUrl = _addTokenToUrl(path.startsWith("http") ? path : "${_apiService.baseUrl}$path");
+        _resolvedVideoUrl = fullUrl;
+        _loadedVideoUrl = fullUrl;
+        _loadedSeekSeconds = seekSeconds;
       });
     } else {
-      // Needs transcoding. Check status and start polling.
       _checkCacheAndPlay(video, seekSeconds);
     }
   }
@@ -187,27 +197,29 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
       _isTranscoding = true;
       _transcodeStatusText = "⏳ Đang tối ưu định dạng video H.265...";
       _resolvedVideoUrl = null;
+      _loadedVideoUrl = null;
     });
 
     final filename = video['filename'];
     final dateStr = _formatDate(_selectedDate);
 
-    // Immediate check
     final status = await _apiService.checkPlaybackCache(_selectedCamId!, dateStr, filename);
     if (status['status'] == 'ready') {
       final String path = status['url'];
+      final fullUrl = _addTokenToUrl(path.startsWith("http") ? path : "${_apiService.baseUrl}$path");
       setState(() {
         _isTranscoding = false;
-        _resolvedVideoUrl = _addTokenToUrl(path.startsWith("http") ? path : "${_apiService.baseUrl}$path");
+        _resolvedVideoUrl = fullUrl;
+        _loadedVideoUrl = fullUrl;
+        _loadedSeekSeconds = seekSeconds;
       });
       return;
     }
 
-    // Start polling
     int pollCount = 0;
     _transcodeTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
       pollCount++;
-      if (pollCount > 150) { // Limit 5 minutes
+      if (pollCount > 150) {
         timer.cancel();
         setState(() {
           _transcodeStatusText = "❌ Lỗi: Quá thời gian chuyển đổi video. Vui lòng thử lại.";
@@ -224,9 +236,12 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
       if (check['status'] == 'ready') {
         timer.cancel();
         final String path = check['url'];
+        final fullUrl = _addTokenToUrl(path.startsWith("http") ? path : "${_apiService.baseUrl}$path");
         setState(() {
           _isTranscoding = false;
-          _resolvedVideoUrl = _addTokenToUrl(path.startsWith("http") ? path : "${_apiService.baseUrl}$path");
+          _resolvedVideoUrl = fullUrl;
+          _loadedVideoUrl = fullUrl;
+          _loadedSeekSeconds = seekSeconds;
         });
       } else {
         setState(() {
@@ -240,7 +255,6 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
     if (_videos.isEmpty) return;
     final targetSeconds = fraction * 86400;
 
-    // Find clip containing this time
     for (int i = 0; i < _videos.length; i++) {
       final v = _videos[i];
       final start = (v['start_seconds'] ?? 0).toDouble();
@@ -251,7 +265,6 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
       }
     }
 
-    // No exact match - find nearest clip after this point
     for (int i = 0; i < _videos.length; i++) {
       final start = (_videos[i]['start_seconds'] ?? 0).toDouble();
       if (start > targetSeconds) {
@@ -293,7 +306,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
   Widget _buildCameraSelector() {
     return Container(
       height: 44,
-      color: const Color(0xFF161920),
+      color: Theme.of(context).colorScheme.surface,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -311,10 +324,10 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                 decoration: BoxDecoration(
-                  color: isActive ? const Color(0xFFFF3B30) : const Color(0xFF1E2330),
+                  color: isActive ? const Color(0xFFFF3B30) : Theme.of(context).cardColor,
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
-                    color: isActive ? const Color(0xFFFF3B30) : const Color(0xFF2A3142),
+                    color: isActive ? const Color(0xFFFF3B30) : Theme.of(context).dividerColor,
                   ),
                 ),
                 child: Row(
@@ -347,7 +360,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
 
     return Container(
       height: 56,
-      color: const Color(0xFF12141A),
+      color: Theme.of(context).scaffoldBackgroundColor,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -370,11 +383,11 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
               child: Container(
                 width: 48,
                 decoration: BoxDecoration(
-                  color: isSelected ? const Color(0xFFFF3B30) : const Color(0xFF1E2330),
+                  color: isSelected ? const Color(0xFFFF3B30) : Theme.of(context).cardColor,
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
                     color: isSelected ? const Color(0xFFFF3B30)
-                           : hasRecording ? const Color(0xFF3E4556) : const Color(0xFF232731),
+                           : hasRecording ? Theme.of(context).dividerColor : Theme.of(context).dividerColor.withOpacity(0.3),
                   ),
                 ),
                 child: Column(
@@ -391,7 +404,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
                     Text(
                       d.day.toString(),
                       style: TextStyle(
-                        color: isSelected ? Colors.white : const Color(0xFFE2E8F0),
+                        color: isSelected ? Colors.white : Theme.of(context).colorScheme.onSurface,
                         fontSize: 16, fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -422,12 +435,10 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
       lastDate: DateTime.now(),
       builder: (context, child) {
         return Theme(
-          data: ThemeData.dark().copyWith(
-            colorScheme: const ColorScheme.dark(
-              primary: Color(0xFFFF3B30),
+          data: Theme.of(context).copyWith(
+            colorScheme: Theme.of(context).colorScheme.copyWith(
+              primary: const Color(0xFFFF3B30),
               onPrimary: Colors.white,
-              surface: Color(0xFF161920),
-              onSurface: Color(0xFFE2E8F0),
             ),
           ),
           child: child!,
@@ -446,11 +457,6 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
     if (_playingIndex < 0 || _playingIndex >= _videos.length) return const SizedBox.shrink();
     final video = _videos[_playingIndex];
     final dateStr = _formatDate(_selectedDate);
-    
-    final double startSecs = (video['start_seconds'] ?? 0).toDouble();
-    final int seekDiff = (_currentPlaySeconds - startSecs).clamp(0.0, (video['duration'] ?? 600.0).toDouble()).toInt();
-    
-    final cookie = _apiService.cookieString;
 
     return Container(
       color: Colors.black,
@@ -482,30 +488,32 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
                 : _resolvedVideoUrl == null
                     ? Container(color: Colors.black)
                     : _PlaybackWebView(
-                        key: ValueKey('play_${_selectedCamId}_${video['filename']}_${seekDiff}_$_resolvedVideoUrl'),
+                        // KEY: Only changes when a NEW video is loaded, NOT on timeupdate
+                        key: ValueKey('play_${_selectedCamId}_${_loadedVideoUrl}_$_loadedSeekSeconds'),
                         videoUrl: _resolvedVideoUrl!,
-                        seekSeconds: seekDiff,
-                        cookie: cookie,
+                        seekSeconds: _loadedSeekSeconds,
+                        cookie: _apiService.cookieString,
                         baseUrl: _apiService.baseUrl,
                         sessionToken: _apiService.sessionToken,
                         onEnded: () {
-                          // Auto-play next clip
                           if (_playingIndex < _videos.length - 1) {
                             _playVideoAtIndex(_playingIndex + 1);
                           }
                         },
                         onTimeUpdate: (seconds) {
                           if (mounted) {
-                            setState(() {
-                              _currentPlaySeconds = startSecs + seconds;
-                            });
+                            final startSecs = (_videos[_playingIndex]['start_seconds'] ?? 0).toDouble();
+                            // Update timeline position WITHOUT triggering WebView rebuild
+                            _currentPlaySeconds = startSecs + seconds;
+                            // Use minimal rebuild - only repaint the timeline
+                            setState(() {});
                           }
                         },
                       ),
           ),
           // Info bar below player
           Container(
-            color: const Color(0xFF161920),
+            color: Theme.of(context).colorScheme.surface,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             child: Row(
               children: [
@@ -528,7 +536,6 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                // Download button
                 GestureDetector(
                   onTap: () {
                     final base = _apiService.baseUrl;
@@ -555,11 +562,10 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
 
     return Container(
       height: 76,
-      color: const Color(0xFF11141A),
+      color: Theme.of(context).scaffoldBackgroundColor,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Column(
         children: [
-          // Zoom buttons row
           SizedBox(
             height: 20,
             child: Row(
@@ -572,7 +578,6 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
             ),
           ),
           const SizedBox(height: 2),
-          // Timeline track
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -596,6 +601,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
                           events: _events,
                           currentSeconds: _currentPlaySeconds,
                           zoom: _timelineZoom,
+                          isDark: Theme.of(context).brightness == Brightness.dark,
                         ),
                       ),
                     ),
@@ -618,9 +624,9 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
           decoration: BoxDecoration(
-            color: isActive ? const Color(0xFFFF3B30) : const Color(0xFF1E2330),
+            color: isActive ? const Color(0xFFFF3B30) : Theme.of(context).cardColor,
             borderRadius: BorderRadius.circular(4),
-            border: Border.all(color: isActive ? const Color(0xFFFF3B30) : const Color(0xFF2A3142)),
+            border: Border.all(color: isActive ? const Color(0xFFFF3B30) : Theme.of(context).dividerColor),
           ),
           child: Text(label,
             style: TextStyle(
@@ -664,10 +670,10 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
         return Container(
           margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
           decoration: BoxDecoration(
-            color: isPlaying ? const Color(0xFF1E2330) : const Color(0xFF161920),
+            color: isPlaying ? Theme.of(context).cardColor : Theme.of(context).colorScheme.surface,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: isPlaying ? const Color(0xFFFF3B30) : const Color(0xFF232731),
+              color: isPlaying ? const Color(0xFFFF3B30) : Theme.of(context).dividerColor,
             ),
           ),
           child: ListTile(
@@ -676,7 +682,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
             leading: Container(
               width: 36, height: 36,
               decoration: BoxDecoration(
-                color: isPlaying ? const Color(0xFFFF3B30) : const Color(0xFF1E2330),
+                color: isPlaying ? const Color(0xFFFF3B30) : Theme.of(context).cardColor,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
@@ -687,7 +693,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
             ),
             title: Text(startTime,
               style: TextStyle(
-                color: isPlaying ? const Color(0xFFFF3B30) : const Color(0xFFE2E8F0),
+                color: isPlaying ? const Color(0xFFFF3B30) : Theme.of(context).colorScheme.onSurface,
                 fontWeight: FontWeight.w700, fontSize: 14,
               ),
             ),
@@ -722,17 +728,19 @@ class _TimelinePainter extends CustomPainter {
   final List<dynamic> events;
   final double currentSeconds;
   final double zoom;
+  final bool isDark;
 
   _TimelinePainter({
     required this.videos,
     required this.events,
     required this.currentSeconds,
     required this.zoom,
+    this.isDark = true,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final bgPaint = Paint()..color = const Color(0xFF1E2330);
+    final bgPaint = Paint()..color = isDark ? const Color(0xFF1E2330) : const Color(0xFFE8EDF2);
     canvas.drawRRect(
       RRect.fromRectAndRadius(Rect.fromLTWH(0, 8, size.width, size.height - 8), const Radius.circular(4)),
       bgPaint,
@@ -761,7 +769,7 @@ class _TimelinePainter extends CustomPainter {
     if (zoom >= 24) intervalMinutes = 10;
     else if (zoom >= 4) intervalMinutes = 30;
 
-    final tickPaint = Paint()..color = const Color(0xFF3E4556);
+    final tickPaint = Paint()..color = isDark ? const Color(0xFF3E4556) : const Color(0xFFB0B8C4);
     final textPainter = TextPainter(textDirection: TextDirection.ltr);
 
     for (int m = 0; m <= 24 * 60; m += intervalMinutes) {
@@ -773,7 +781,7 @@ class _TimelinePainter extends CustomPainter {
       final label = "${h.toString().padLeft(2, '0')}:${min.toString().padLeft(2, '0')}";
       textPainter.text = TextSpan(
         text: label,
-        style: const TextStyle(color: Color(0xFF7E8B9B), fontSize: 8),
+        style: TextStyle(color: isDark ? const Color(0xFF7E8B9B) : const Color(0xFF64748B), fontSize: 8),
       );
       textPainter.layout();
       textPainter.paint(canvas, Offset(x - textPainter.width / 2, 0));
@@ -786,8 +794,6 @@ class _TimelinePainter extends CustomPainter {
         ..color = const Color(0xFFFF3B30)
         ..strokeWidth = 2;
       canvas.drawLine(Offset(handleX, 0), Offset(handleX, size.height), handlePaint);
-
-      // Small circle at top
       canvas.drawCircle(Offset(handleX, 4), 4, handlePaint);
     }
   }
@@ -836,10 +842,9 @@ class _PlaybackWebViewState extends State<_PlaybackWebView> {
   }
 
   Future<void> _initWebView() async {
-    // Set cookie via WebViewCookieManager for iOS compatibility (WKWebView)
     final cookieManager = WebViewCookieManager();
     final uri = Uri.parse(widget.baseUrl);
-    
+
     try {
       await cookieManager.setCookie(WebViewCookie(
         name: 'dvr_session',
@@ -848,10 +853,9 @@ class _PlaybackWebViewState extends State<_PlaybackWebView> {
         path: '/',
       ));
     } catch (e) {
-      // Fallback: cookie will be set via JavaScript in the HTML
       debugPrint('Cookie manager failed, using JS fallback: $e');
     }
-    
+
     late final PlatformWebViewControllerCreationParams params;
     if (WebViewPlatform.instance is WebKitWebViewPlatform) {
       params = WebKitWebViewControllerCreationParams(

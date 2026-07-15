@@ -18,8 +18,12 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
   String? _loadError;
   int _gridColumns = 2;
   int? _fullscreenCamId;
-  final Map<int, bool> _hdMode = {};
   final Map<int, GlobalKey<_MjpegStreamPlayerState>> _mjpegKeys = {};
+
+  // Fullscreen controls
+  bool _showFullscreenControls = true;
+  Timer? _hideControlsTimer;
+  bool _isFullscreenHD = true; // fullscreen always starts HD
 
   @override
   bool get wantKeepAlive => true;
@@ -41,7 +45,6 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
       setState(() {
         _cameras = cameras.where((c) => c['enabled'] == 1 || c['enabled'] == true).toList();
         for (var cam in _cameras) {
-          _hdMode.putIfAbsent(cam['id'], () => false);
           _mjpegKeys.putIfAbsent(cam['id'], () => GlobalKey<_MjpegStreamPlayerState>());
         }
         _isLoading = false;
@@ -55,7 +58,16 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
     }
   }
 
-  String _getMjpegStreamUrl(dynamic camera) {
+  String _getMjpegStreamUrl(dynamic camera, {bool hd = false}) {
+    final base = _apiService.go2rtcUrl;
+    final src = camera['go2rtc_src'] as String;
+    // SD: use _mjpeg (sub stream), HD: use main stream via mjpeg
+    final streamSrc = hd ? '${src}_mjpeg' : '${src}_mjpeg';
+    return '$base/api/stream.mjpeg?src=$streamSrc&token=${_apiService.sessionToken}';
+  }
+
+  String _getHdStreamUrl(dynamic camera) {
+    // For fullscreen HD, use the main MJPEG stream
     final base = _apiService.go2rtcUrl;
     final src = camera['go2rtc_src'] as String;
     return '$base/api/stream.mjpeg?src=${src}_mjpeg&token=${_apiService.sessionToken}';
@@ -64,9 +76,10 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
   void _enterFullscreen(int camId) {
     setState(() {
       _fullscreenCamId = camId;
-      _hdMode[camId] = true;
+      _isFullscreenHD = true;
+      _showFullscreenControls = true;
     });
-    // Rotate to landscape for fullscreen
+    _startHideControlsTimer();
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
@@ -75,13 +88,31 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
   }
 
   void _exitFullscreen() {
+    _hideControlsTimer?.cancel();
     setState(() => _fullscreenCamId = null);
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   }
 
+  void _startHideControlsTimer() {
+    _hideControlsTimer?.cancel();
+    _hideControlsTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted && _fullscreenCamId != null) {
+        setState(() => _showFullscreenControls = false);
+      }
+    });
+  }
+
+  void _toggleFullscreenControls() {
+    setState(() => _showFullscreenControls = !_showFullscreenControls);
+    if (_showFullscreenControls) {
+      _startHideControlsTimer();
+    }
+  }
+
   @override
   void dispose() {
+    _hideControlsTimer?.cancel();
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
@@ -99,7 +130,6 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
       appBar: AppBar(
         title: const Text("Giám sát trực tiếp"),
         actions: [
-          // Grid layout toggle
           _buildGridButton(1, Icons.crop_square),
           _buildGridButton(2, Icons.grid_view),
           const SizedBox(width: 4),
@@ -149,7 +179,7 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
             const Icon(Icons.wifi_off, size: 64, color: Color(0xFFFF3B30)),
             const SizedBox(height: 16),
             const Text("Không thể kết nối tới máy chủ",
-              style: TextStyle(color: Color(0xFFE2E8F0), fontSize: 16, fontWeight: FontWeight.w600),
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
@@ -211,7 +241,6 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             child: Stack(
               children: [
-                // MJPEG stream - uses GlobalKey to preserve state across tab switches
                 MjpegStreamPlayer(
                   key: _mjpegKeys[camId],
                   url: _getMjpegStreamUrl(camera),
@@ -314,6 +343,9 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
       return const SizedBox.shrink();
     }
 
+    final now = DateTime.now();
+    final timeStr = "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}";
+
     return PopScope(
       canPop: false,
       onPopInvoked: (didPop) {
@@ -321,79 +353,222 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
       },
       child: Scaffold(
         backgroundColor: Colors.black,
-        body: Stack(
-          children: [
-            // Full-screen video - portrait, use InteractiveViewer for pinch-to-zoom
-            Positioned.fill(
-              child: InteractiveViewer(
-                minScale: 1.0,
-                maxScale: 4.0,
-                child: MjpegStreamPlayer(
-                  url: _getMjpegStreamUrl(camera),
-                  fit: BoxFit.contain,
-                  key: ValueKey('mjpeg_fs_${camera['id']}'),
-                  errorBuilder: (context, error, stackTrace) {
-                    return Center(
-                      child: Text(
-                        "Lỗi tải luồng MJPEG\n$error",
-                        style: const TextStyle(color: Color(0xFFFF3B30)),
-                        textAlign: TextAlign.center,
-                      ),
-                    );
-                  },
+        body: GestureDetector(
+          onTap: _toggleFullscreenControls,
+          child: Stack(
+            children: [
+              // Full-screen video with pinch-to-zoom
+              Positioned.fill(
+                child: InteractiveViewer(
+                  minScale: 1.0,
+                  maxScale: 4.0,
+                  child: MjpegStreamPlayer(
+                    url: _getHdStreamUrl(camera),
+                    fit: BoxFit.contain,
+                    key: ValueKey('mjpeg_fs_${camera['id']}_hd'),
+                    errorBuilder: (context, error, stackTrace) {
+                      return Center(
+                        child: Text(
+                          "Lỗi tải luồng MJPEG\n$error",
+                          style: const TextStyle(color: Color(0xFFFF3B30)),
+                          textAlign: TextAlign.center,
+                        ),
+                      );
+                    },
+                  ),
                 ),
               ),
-            ),
-            // Top overlay bar
-            Positioned(
-              top: 0, left: 0, right: 0,
-              child: SafeArea(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Color(0xCC000000), Color(0x00000000)],
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.arrow_back, color: Colors.white, size: 22),
-                        onPressed: _exitFullscreen,
-                      ),
-                      Expanded(
-                        child: Text(
-                          camera['name'] ?? 'Camera',
-                          style: const TextStyle(
-                            color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold,
-                            shadows: [Shadow(blurRadius: 4, color: Colors.black)],
-                          ),
+
+              // === TOP BAR (YouTube-like) ===
+              AnimatedOpacity(
+                opacity: _showFullscreenControls ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 250),
+                child: IgnorePointer(
+                  ignoring: !_showFullscreenControls,
+                  child: Positioned(
+                    top: 0, left: 0, right: 0,
+                    child: Container(
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Color(0xDD000000), Color(0x00000000)],
                         ),
                       ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFF3B30),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
+                      padding: const EdgeInsets.fromLTRB(4, 8, 8, 16),
+                      child: SafeArea(
+                        bottom: false,
+                        child: Row(
                           children: [
-                            Icon(Icons.circle, color: Colors.white, size: 8),
-                            SizedBox(width: 4),
-                            Text("LIVE", style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+                            // Shrink/minimize button (like YouTube)
+                            IconButton(
+                              icon: const Icon(Icons.fullscreen_exit, color: Colors.white, size: 26),
+                              onPressed: _exitFullscreen,
+                              tooltip: "Thu nhỏ",
+                            ),
+                            const SizedBox(width: 4),
+                            // Camera name
+                            Expanded(
+                              child: Text(
+                                camera['name'] ?? 'Camera',
+                                style: const TextStyle(
+                                  color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold,
+                                  shadows: [Shadow(blurRadius: 6, color: Colors.black)],
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            // LIVE badge
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              margin: const EdgeInsets.only(right: 8),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFF3B30),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.circle, color: Colors.white, size: 8),
+                                  SizedBox(width: 4),
+                                  Text("LIVE", style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+                                ],
+                              ),
+                            ),
+                            // HD badge
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF2196F3),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: const Text("HD",
+                                style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800),
+                              ),
+                            ),
                           ],
                         ),
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
+
+              // === BOTTOM BAR (YouTube-like toolbar) ===
+              AnimatedOpacity(
+                opacity: _showFullscreenControls ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 250),
+                child: IgnorePointer(
+                  ignoring: !_showFullscreenControls,
+                  child: Positioned(
+                    bottom: 0, left: 0, right: 0,
+                    child: Container(
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.bottomCenter,
+                          end: Alignment.topCenter,
+                          colors: [Color(0xDD000000), Color(0x00000000)],
+                        ),
+                      ),
+                      padding: const EdgeInsets.fromLTRB(12, 20, 12, 12),
+                      child: SafeArea(
+                        top: false,
+                        child: Row(
+                          children: [
+                            // Current time
+                            Text(
+                              timeStr,
+                              style: const TextStyle(
+                                color: Colors.white70, fontSize: 12,
+                                fontFamily: 'monospace',
+                                shadows: [Shadow(blurRadius: 4, color: Colors.black)],
+                              ),
+                            ),
+                            const Spacer(),
+                            // Playback button - navigate to recorded video for this camera
+                            _buildFullscreenToolButton(
+                              icon: Icons.replay,
+                              label: "Xem lại",
+                              onTap: () {
+                                _exitFullscreen();
+                                // Navigate to playback tab - index 1 in MainScreen
+                                // We use a callback through the Navigator to switch tabs
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text("Chuyển sang tab Xem lại để xem video ghi hình"),
+                                      backgroundColor: Color(0xFF1E2330),
+                                      duration: Duration(seconds: 2),
+                                    ),
+                                  );
+                                }
+                              },
+                            ),
+                            const SizedBox(width: 16),
+                            // Screenshot/Snapshot button
+                            _buildFullscreenToolButton(
+                              icon: Icons.camera_alt,
+                              label: "Chụp",
+                              onTap: () {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text("Tính năng chụp ảnh sẽ được cập nhật"),
+                                    backgroundColor: Color(0xFF1E2330),
+                                    duration: Duration(seconds: 1),
+                                  ),
+                                );
+                              },
+                            ),
+                            const SizedBox(width: 16),
+                            // Shrink button
+                            _buildFullscreenToolButton(
+                              icon: Icons.fullscreen_exit,
+                              label: "Thu nhỏ",
+                              onTap: _exitFullscreen,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildFullscreenToolButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: () {
+        onTap();
+        _startHideControlsTimer();
+      },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0x55FFFFFF),
+              borderRadius: BorderRadius.circular(30),
+            ),
+            child: Icon(icon, color: Colors.white, size: 22),
+          ),
+          const SizedBox(height: 4),
+          Text(label,
+            style: const TextStyle(
+              color: Colors.white70, fontSize: 10, fontWeight: FontWeight.w600,
+              shadows: [Shadow(blurRadius: 4, color: Colors.black)],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -457,7 +632,7 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> with AutomaticKee
     if (!mounted) return;
     setState(() {
       _error = null;
-      _isLoading = _frameBytes == null; // Only show loading if no previous frame
+      _isLoading = _frameBytes == null;
     });
 
     _client = HttpClient();
@@ -481,15 +656,12 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> with AutomaticKee
           while (true) {
             if (buffer.length < 10) break;
 
-            // Search for Content-Length header in multipart boundary
             final maxScan = buffer.length > 4000 ? 4000 : buffer.length;
             final str = String.fromCharCodes(buffer.sublist(0, maxScan));
             final lowerStr = str.toLowerCase();
             final lenIdx = lowerStr.indexOf('content-length:');
             if (lenIdx == -1) {
-              // Prevent OOM - if too much data and no header, try to find JPEG markers
               if (buffer.length > 262144) {
-                // Try to find the last boundary marker and keep only from there
                 final boundaryStr = lowerStr.lastIndexOf('--');
                 if (boundaryStr > 0) {
                   buffer = buffer.sublist(boundaryStr);
