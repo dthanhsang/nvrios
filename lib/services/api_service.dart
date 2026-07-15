@@ -193,7 +193,7 @@ class ApiService {
     try {
       final response = await http.post(
         Uri.parse("$_baseUrl/api/cameras/$camId/update"),
-        headers: {"Content-Type": "application/x-www-form-urlencoded", ..._headers},
+        headers: {..._headers, "Content-Type": "application/x-www-form-urlencoded"},
         body: data,
       ).timeout(const Duration(seconds: 10));
       return response.statusCode == 200 || response.statusCode == 302 || response.statusCode == 303;
@@ -207,7 +207,7 @@ class ApiService {
     try {
       final response = await http.post(
         Uri.parse("$_baseUrl/api/cameras"),
-        headers: {"Content-Type": "application/x-www-form-urlencoded", ..._headers},
+        headers: {..._headers, "Content-Type": "application/x-www-form-urlencoded"},
         body: data,
       ).timeout(const Duration(seconds: 10));
       return response.statusCode == 200 || response.statusCode == 302 || response.statusCode == 303;
