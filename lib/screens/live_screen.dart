@@ -848,6 +848,7 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> with AutomaticKee
   Uint8List? _currentFrame;
   bool _isConnecting = true;
   bool _hasError = false;
+  int _connectProgress = 0;
   // ignore: unused_field
   String _errorMessage = '';
   int _retryCount = 0;
@@ -888,7 +889,11 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> with AutomaticKee
 
   Future<void> _connect() async {
     if (_disposed) return;
-    setState(() { _isConnecting = true; _hasError = false; });
+    setState(() {
+      _connectProgress = 10;
+      _isConnecting = true;
+      _hasError = false;
+    });
 
     try {
       _httpClient?.close(force: true);
@@ -897,19 +902,27 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> with AutomaticKee
         ..badCertificateCallback = (cert, host, port) => true;
 
       final uri = Uri.parse(widget.streamUrl);
+      if (mounted) setState(() => _connectProgress = 30);
       final request = await _httpClient!.getUrl(uri);
       request.headers.set('Connection', 'keep-alive');
+      
+      if (mounted) setState(() => _connectProgress = 50);
       final response = await request.close();
 
       if (_disposed) return;
-      setState(() => _isConnecting = false);
+      if (mounted) setState(() => _connectProgress = 70);
 
       // Parse multipart MJPEG stream
       List<int> buffer = [];
       int? contentLength;
+      bool receivedFirstChunk = false;
 
       await for (final chunk in response) {
         if (_disposed) break;
+        if (!receivedFirstChunk) {
+          receivedFirstChunk = true;
+          if (mounted) setState(() => _connectProgress = 90);
+        }
         buffer.addAll(chunk);
 
         while (buffer.length > 2) {
@@ -1002,14 +1015,14 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> with AutomaticKee
         gaplessPlayback: true,
       );
     }
-    if (_isConnecting) {
-      return const Center(
+    if (_isConnecting || (_currentFrame == null && !_hasError)) {
+      return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFFF3B30))),
-            SizedBox(height: 8),
-            Text('Đang kết nối...', style: TextStyle(color: Colors.grey, fontSize: 11)),
+            const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFFF3B30))),
+            const SizedBox(height: 8),
+            Text('Đang kết nối... $_connectProgress%', style: const TextStyle(color: Colors.grey, fontSize: 11)),
           ],
         ),
       );

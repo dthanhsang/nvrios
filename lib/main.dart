@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'screens/login_screen.dart';
 
 void main() {
@@ -27,7 +26,7 @@ class MyApp extends StatelessWidget {
         brightness: Brightness.dark,
         colorSchemeSeed: primaryColor,
         scaffoldBackgroundColor: const Color(0xFF0F1115),
-        textTheme: GoogleFonts.robotoTextTheme(ThemeData.dark().textTheme),
+        fontFamily: 'Roboto',
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFF161920),
           foregroundColor: Colors.white,

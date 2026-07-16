@@ -101,8 +101,10 @@ class _HealthScreenState extends State<HealthScreen> with AutomaticKeepAliveClie
               children: [
                 // Camera Health
                 ..._cameraHealth.map((cam) {
-                  final status = cam['status'] as String? ?? 'unknown';
+                  final status = cam['recording_status'] as String? ?? (cam['status'] as String? ?? 'unknown');
                   final name = cam['name'] as String? ?? 'Camera';
+                  final pid = cam['pid'];
+                  final face = cam['face_detection'] as String? ?? 'disabled';
                   Color statusColor;
                   IconData statusIcon;
                   switch (status) {
@@ -116,7 +118,10 @@ class _HealthScreenState extends State<HealthScreen> with AutomaticKeepAliveClie
                     child: ListTile(
                       leading: Icon(Icons.videocam, color: statusColor),
                       title: Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                      subtitle: Text(status.toUpperCase(), style: TextStyle(color: statusColor, fontSize: 11, fontWeight: FontWeight.bold)),
+                      subtitle: Text(
+                        'GHI HÌNH: ${status.toUpperCase()} ${pid != null ? "(PID: $pid)" : ""} • AI FACE: ${face.toUpperCase()}',
+                        style: TextStyle(color: statusColor, fontSize: 11, fontWeight: FontWeight.bold),
+                      ),
                       trailing: Icon(statusIcon, color: statusColor, size: 16),
                     ),
                   );
@@ -130,6 +135,8 @@ class _HealthScreenState extends State<HealthScreen> with AutomaticKeepAliveClie
                   _buildRamCard(),
                   const SizedBox(height: 8),
                   _buildDiskCard(),
+                  const SizedBox(height: 8),
+                  _buildNetworkCard(),
                 ],
                 const SizedBox(height: 16),
 
@@ -192,6 +199,8 @@ class _HealthScreenState extends State<HealthScreen> with AutomaticKeepAliveClie
   Widget _buildResourceCard(String title, IconData icon, Map<String, dynamic> status) {
     final cpuLoad = status['cpu_load'] as List<dynamic>? ?? [];
     final load1 = cpuLoad.isNotEmpty ? (cpuLoad[0] as num).toDouble() : 0.0;
+    final load5 = cpuLoad.length > 1 ? (cpuLoad[1] as num).toDouble() : 0.0;
+    final load15 = cpuLoad.length > 2 ? (cpuLoad[2] as num).toDouble() : 0.0;
     final temp = (status['cpu_temp'] as num?)?.toDouble() ?? 0;
     return Card(
       child: Padding(
@@ -205,8 +214,11 @@ class _HealthScreenState extends State<HealthScreen> with AutomaticKeepAliveClie
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                  Text('Load: ${load1.toStringAsFixed(2)} • Temp: ${temp.toStringAsFixed(0)}°C',
-                    style: TextStyle(color: _tempColor(temp), fontSize: 12)),
+                  const SizedBox(height: 4),
+                  Text('Load Avg: ${load1.toStringAsFixed(2)}, ${load5.toStringAsFixed(2)}, ${load15.toStringAsFixed(2)}',
+                    style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                  Text('Nhiệt độ CPU: ${temp.toStringAsFixed(1)}°C',
+                    style: TextStyle(color: _tempColor(temp), fontSize: 12, fontWeight: FontWeight.w500)),
                 ],
               ),
             ),
@@ -272,6 +284,38 @@ class _HealthScreenState extends State<HealthScreen> with AutomaticKeepAliveClie
             ),
             const SizedBox(height: 8),
             LinearProgressIndicator(value: ratio, backgroundColor: Colors.grey[800], valueColor: AlwaysStoppedAnimation(_usageColor(ratio))),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNetworkCard() {
+    final net = _status?['network'] as Map<String, dynamic>? ?? {};
+    final rxBytes = (net['rx_bytes'] as num?)?.toDouble() ?? 0;
+    final txBytes = (net['tx_bytes'] as num?)?.toDouble() ?? 0;
+    final rxGb = rxBytes / (1024 * 1024 * 1024);
+    final txGb = txBytes / (1024 * 1024 * 1024);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            const Icon(Icons.swap_calls, color: Colors.blue, size: 28),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Network Traffic (eth0)', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Nhận (Rx): ${rxGb.toStringAsFixed(2)} GB • Gửi (Tx): ${txGb.toStringAsFixed(2)} GB',
+                    style: const TextStyle(color: Colors.grey, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
