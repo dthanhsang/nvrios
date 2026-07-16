@@ -61,5 +61,7 @@
 	<array>
 		<string>fetch</string>
 	</array>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Sử dụng Face ID để đăng nhập nhanh vào ứng dụng WebDVR</string>
 </dict>
 </plist>
