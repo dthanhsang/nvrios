@@ -1,13 +1,11 @@
 import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:webview_flutter/webview_flutter.dart';
-import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
-import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:intl/intl.dart';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:video_player/video_player.dart';
 import '../services/api_service.dart';
 import '../models/camera.dart';
 import '../models/video_file.dart';
@@ -32,11 +30,13 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
   double _currentPlaySeconds = 0;
   bool _isLoading = true;
   bool _isTranscoding = false;
-  String? _loadedVideoUrl;
-  int _loadedSeekSeconds = 0;
   int _timelineZoom = 1; // 1=24h, 4=6h, 24=1h
 
-  // --- New state ---
+  // Video Player state
+  VideoPlayerController? _videoPlayerController;
+  bool _isPlayerInitialized = false;
+
+  // New state
   double _playbackSpeed = 1.0;
   double _downloadProgress = -1; // -1 = not downloading
   String? _lastDownloadedPath;
@@ -51,6 +51,37 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
   void initState() {
     super.initState();
     _loadCameras();
+  }
+
+  @override
+  void dispose() {
+    _disposeVideoPlayer();
+    super.dispose();
+  }
+
+  void _disposeVideoPlayer() {
+    _videoPlayerController?.removeListener(_videoPlayerListener);
+    _videoPlayerController?.dispose();
+    _videoPlayerController = null;
+    _isPlayerInitialized = false;
+  }
+
+  void _videoPlayerListener() {
+    if (_videoPlayerController == null || !_isPlayerInitialized) return;
+    
+    final value = _videoPlayerController!.value;
+    if (value.position.inSeconds != 0) {
+      if (mounted) {
+        setState(() {
+          _currentPlaySeconds = (_currentVideo?.startSeconds.toDouble() ?? 0) + value.position.inSeconds;
+        });
+      }
+    }
+
+    // Tự động chuyển video tiếp theo khi kết thúc
+    if (value.isInitialized && value.position >= value.duration) {
+      _onVideoEnded();
+    }
   }
 
   Future<void> _loadCameras() async {
@@ -82,6 +113,12 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
         _videos = videos;
         _events = events;
         _isLoading = false;
+        
+        // Nếu đang phát mà chuyển camera/ngày, dừng trình phát
+        _disposeVideoPlayer();
+        _currentVideo = null;
+        _currentVideoIndex = -1;
+        _currentPlaySeconds = 0;
       });
     }
   }
@@ -89,6 +126,9 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
   Future<void> _playVideo(int index, {int seekSeconds = 0}) async {
     if (index < 0 || index >= _videos.length) return;
     final video = _videos[index];
+
+    // Ngừng player cũ
+    _disposeVideoPlayer();
 
     // Check if transcoding needed
     if (video.needsTranscode && !video.hasCache) {
@@ -117,10 +157,43 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
       setState(() {
         _currentVideo = video;
         _currentVideoIndex = index;
-        _loadedVideoUrl = videoUrl;
-        _loadedSeekSeconds = seekSeconds;
         _currentPlaySeconds = video.startSeconds.toDouble() + seekSeconds;
+        _isLoading = false;
       });
+    }
+
+    try {
+      final controller = VideoPlayerController.networkUrl(
+        Uri.parse(videoUrl),
+        httpHeaders: _apiService.authHeaders,
+      );
+
+      _videoPlayerController = controller;
+      await controller.initialize();
+      
+      if (!mounted) return;
+
+      controller.addListener(_videoPlayerListener);
+      await controller.setPlaybackSpeed(_playbackSpeed);
+      
+      if (seekSeconds > 0) {
+        await controller.seekTo(Duration(seconds: seekSeconds));
+      }
+      
+      await controller.play();
+
+      setState(() {
+        _isPlayerInitialized = true;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Lỗi khởi tạo trình phát: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -130,20 +203,25 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
     }
   }
 
-  void _onTimeUpdate(double seconds) {
-    if (mounted) {
-      setState(() {
-        _currentPlaySeconds = (_currentVideo?.startSeconds.toDouble() ?? 0) + seconds;
-      });
-    }
-  }
-
-  void _onTimelineTap(double totalSeconds) {
+  void _onTimelineTap(double totalSeconds) async {
     // Find video containing this timestamp
     for (int i = 0; i < _videos.length; i++) {
       final v = _videos[i];
       if (totalSeconds >= v.startSeconds && totalSeconds < v.startSeconds + v.duration) {
-        _playVideo(i, seekSeconds: (totalSeconds - v.startSeconds).toInt());
+        final offset = (totalSeconds - v.startSeconds).toInt();
+        
+        // Nếu đang phát đúng video đó, chỉ cần seek native (cực nhanh!)
+        if (_currentVideoIndex == i && _videoPlayerController != null && _isPlayerInitialized) {
+          await _videoPlayerController!.seekTo(Duration(seconds: offset));
+          if (mounted) {
+            setState(() {
+              _currentPlaySeconds = totalSeconds;
+            });
+          }
+        } else {
+          // Play video mới hoặc transcode
+          _playVideo(i, seekSeconds: offset);
+        }
         return;
       }
     }
@@ -186,15 +264,10 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
     return '${weekdays[dt.weekday % 7]}\n$day';
   }
 
-  // ==================== NEW: Speed Control ====================
-
-  void _setPlaybackSpeed(double speed) {
+  void _setPlaybackSpeed(double speed) async {
     setState(() => _playbackSpeed = speed);
-    // The WebView player URL will include speed param on next reload
-    // If currently playing, reload with new speed
-    if (_loadedVideoUrl != null && _currentVideo != null) {
-      // Force rebuild the webview with the new speed
-      setState(() {});
+    if (_videoPlayerController != null && _isPlayerInitialized) {
+      await _videoPlayerController!.setPlaybackSpeed(speed);
     }
   }
 
@@ -242,8 +315,6 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
     if (speed == speed.toInt()) return 'x${speed.toInt()}';
     return 'x$speed';
   }
-
-  // ==================== NEW: Download ====================
 
   Future<void> _downloadCurrentVideo() async {
     if (_currentVideo == null || _downloadProgress >= 0) return;
@@ -312,8 +383,6 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
     );
   }
 
-  // ==================== NEW: Snapshot ====================
-
   Future<void> _takeSnapshot() async {
     if (_selectedCamera == null || _isSnapshotting) return;
 
@@ -362,8 +431,6 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
       }
     }
   }
-
-  // ==================== BUILD ====================
 
   @override
   Widget build(BuildContext context) {
@@ -444,8 +511,8 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
                         color: selected ? const Color(0xFFFF3B30) : const Color(0xFF1E2330),
                         borderRadius: BorderRadius.circular(8),
                         border: hasRecordings && !selected
-                          ? Border.all(color: const Color(0xFFFF3B30).withOpacity(0.3))
-                          : null,
+                            ? Border.all(color: const Color(0xFFFF3B30).withOpacity(0.3))
+                            : null,
                       ),
                       child: Stack(
                         alignment: Alignment.topRight,
@@ -476,19 +543,12 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
               },
             ),
           ),
-          const Divider(height: 1, color: Color(0xFF2A3040)),
+          const SizedBox(height: 4),
 
           // Video player area
-          if (_loadedVideoUrl != null) SizedBox(
+          SizedBox(
             height: 220,
-            child: _PlaybackWebView(
-              key: ValueKey('${_loadedVideoUrl}_${_loadedSeekSeconds}_$_playbackSpeed'),
-              playerUrl: _buildPlayerUrl(),
-              baseUrl: _apiService.baseUrl,
-              token: _apiService.sessionToken,
-              onEnded: _onVideoEnded,
-              onTimeUpdate: _onTimeUpdate,
-            ),
+            child: _buildPlayerArea(),
           ),
 
           // Controls bar: speed, snapshot, download
@@ -548,67 +608,129 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
           // Video list
           Expanded(
             child: _isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : _videos.isEmpty
-                ? const Center(child: Text('Không có video', style: TextStyle(color: Colors.grey)))
-                : ListView.builder(
-                    itemCount: _videos.length,
-                    itemBuilder: (context, i) {
-                      final video = _videos[i];
-                      final isPlaying = i == _currentVideoIndex;
-                      return ListTile(
-                        dense: true,
-                        selected: isPlaying,
-                        selectedTileColor: const Color(0xFFFF3B30).withOpacity(0.1),
-                        leading: Icon(
-                          isPlaying ? Icons.play_circle_filled : Icons.play_circle_outline,
-                          color: isPlaying ? const Color(0xFFFF3B30) : Colors.grey,
-                          size: 28,
-                        ),
-                        title: Text(video.time, style: TextStyle(
-                          color: isPlaying ? const Color(0xFFFF3B30) : Colors.white,
-                          fontWeight: isPlaying ? FontWeight.bold : FontWeight.normal,
-                          fontSize: 14,
-                        )),
-                        subtitle: Text(
-                          '${_formatDuration(video.duration)} • ${video.sizeMb.toStringAsFixed(1)}MB',
-                          style: const TextStyle(color: Colors.grey, fontSize: 11),
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                              decoration: BoxDecoration(
-                                color: video.isH264 ? Colors.blue.withOpacity(0.2) : Colors.purple.withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(3),
-                              ),
-                              child: Text(
-                                video.codec.toUpperCase(),
-                                style: TextStyle(
-                                  color: video.isH264 ? Colors.blue : Colors.purple,
-                                  fontSize: 9, fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                ? const Center(child: CircularProgressIndicator())
+                : _videos.isEmpty
+                    ? const Center(child: Text('Không có video', style: TextStyle(color: Colors.grey)))
+                    : ListView.builder(
+                        itemCount: _videos.length,
+                        itemBuilder: (context, i) {
+                          final video = _videos[i];
+                          final isPlaying = i == _currentVideoIndex;
+                          return ListTile(
+                            dense: true,
+                            selected: isPlaying,
+                            selectedTileColor: const Color(0xFFFF3B30).withOpacity(0.1),
+                            leading: Icon(
+                              isPlaying ? Icons.play_circle_filled : Icons.play_circle_outline,
+                              color: isPlaying ? const Color(0xFFFF3B30) : Colors.grey,
+                              size: 28,
                             ),
-                          ],
-                        ),
-                        onTap: () => _playVideo(i),
-                      );
-                    },
-                  ),
+                            title: Text(video.time, style: TextStyle(
+                              color: isPlaying ? const Color(0xFFFF3B30) : Colors.white,
+                              fontWeight: isPlaying ? FontWeight.bold : FontWeight.normal,
+                              fontSize: 14,
+                            )),
+                            subtitle: Text(
+                              '${_formatDuration(video.duration)} • ${video.sizeMb.toStringAsFixed(1)}MB',
+                              style: const TextStyle(color: Colors.grey, fontSize: 11),
+                            ),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                  decoration: BoxDecoration(
+                                    color: video.isH264 ? Colors.blue.withOpacity(0.2) : Colors.purple.withOpacity(0.2),
+                                    borderRadius: BorderRadius.circular(3),
+                                  ),
+                                  child: Text(
+                                    video.codec.toUpperCase(),
+                                    style: TextStyle(
+                                      color: video.isH264 ? Colors.blue : Colors.purple,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            onTap: () => _playVideo(i),
+                          );
+                        },
+                      ),
           ),
         ],
       ),
     );
   }
 
-  String _buildPlayerUrl() {
-    final base = _apiService.getPlayerUrl(_loadedVideoUrl!, seekSeconds: _loadedSeekSeconds);
-    if (_playbackSpeed != 1.0) {
-      return '$base&speed=$_playbackSpeed';
+  Widget _buildPlayerArea() {
+    if (_currentVideo == null) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.video_library, size: 48, color: Colors.grey),
+            SizedBox(height: 8),
+            Text('Chọn một video từ danh sách để xem', style: TextStyle(color: Colors.grey)),
+          ],
+        ),
+      );
     }
-    return base;
+
+    if (_videoPlayerController == null || !_isPlayerInitialized) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(color: Color(0xFFFF3B30)),
+            SizedBox(height: 12),
+            Text('Đang tải luồng video...', style: TextStyle(color: Colors.grey, fontSize: 13)),
+          ],
+        ),
+      );
+    }
+
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        GestureDetector(
+          onTap: () {
+            if (_videoPlayerController != null) {
+              setState(() {
+                if (_videoPlayerController!.value.isPlaying) {
+                  _videoPlayerController!.pause();
+                } else {
+                  _videoPlayerController!.play();
+                }
+              });
+            }
+          },
+          child: Container(
+            color: Colors.black,
+            child: AspectRatio(
+              aspectRatio: _videoPlayerController!.value.aspectRatio,
+              child: VideoPlayer(_videoPlayerController!),
+            ),
+          ),
+        ),
+        if (!_videoPlayerController!.value.isPlaying)
+          IgnorePointer(
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.5),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.play_arrow,
+                size: 40,
+                color: Colors.white,
+              ),
+            ),
+          ),
+      ],
+    );
   }
 
   Widget _buildControlsBar() {
@@ -805,79 +927,6 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
   }
 }
 
-// ==================== WEBVIEW PLAYER ====================
-
-class _PlaybackWebView extends StatefulWidget {
-  final String playerUrl;
-  final String baseUrl;
-  final String token;
-  final VoidCallback onEnded;
-  final ValueChanged<double> onTimeUpdate;
-
-  const _PlaybackWebView({
-    super.key,
-    required this.playerUrl,
-    required this.baseUrl,
-    required this.token,
-    required this.onEnded,
-    required this.onTimeUpdate,
-  });
-
-  @override
-  State<_PlaybackWebView> createState() => _PlaybackWebViewState();
-}
-
-class _PlaybackWebViewState extends State<_PlaybackWebView> {
-  late final WebViewController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-
-    late final PlatformWebViewControllerCreationParams params;
-    if (WebViewPlatform.instance is WebKitWebViewPlatform) {
-      params = WebKitWebViewControllerCreationParams(
-        allowsInlineMediaPlayback: true,
-        mediaTypesRequiringUserAction: const <PlaybackMediaTypes>{},
-      );
-    } else {
-      params = const PlatformWebViewControllerCreationParams();
-    }
-
-    _controller = WebViewController.fromPlatformCreationParams(params)
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..addJavaScriptChannel('Flutter', onMessageReceived: (msg) {
-        if (msg.message == 'ended') {
-          widget.onEnded();
-        } else if (msg.message.startsWith('time:')) {
-          final seconds = double.tryParse(msg.message.substring(5));
-          if (seconds != null) widget.onTimeUpdate(seconds);
-        }
-      });
-
-    if (_controller.platform is AndroidWebViewController) {
-      (_controller.platform as AndroidWebViewController).setMediaPlaybackRequiresUserGesture(false);
-    }
-
-    // Set cookie and load
-    final cookieManager = WebViewCookieManager();
-    final uri = Uri.parse(widget.baseUrl);
-    cookieManager.setCookie(WebViewCookie(
-      name: 'dvr_session',
-      value: widget.token,
-      domain: uri.host,
-      path: '/',
-    )).then((_) {
-      _controller.loadRequest(Uri.parse(widget.playerUrl));
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return WebViewWidget(controller: _controller);
-  }
-}
-
 // ==================== TIMELINE PAINTER ====================
 
 class _TimelinePainter extends CustomPainter {
@@ -901,7 +950,7 @@ class _TimelinePainter extends CustomPainter {
       bgPaint,
     );
 
-    const totalSeconds = 86400.0;
+    const double totalSeconds = 86400.0;
     double viewStart = 0;
     double viewEnd = totalSeconds;
 
@@ -918,32 +967,23 @@ class _TimelinePainter extends CustomPainter {
     for (final v in videos) {
       final start = v.startSeconds.toDouble();
       final end = start + v.duration;
-      if (end < viewStart || start > viewEnd) continue;
+      if (end < viewStart || start > viewEnd) {
+        continue;
+      }
       final x1 = ((start - viewStart) / viewDuration * size.width).clamp(0.0, size.width);
       final x2 = ((end - viewStart) / viewDuration * size.width).clamp(0.0, size.width);
-      canvas.drawRect(Rect.fromLTWH(x1, 8, x2 - x1, size.height - 28), recPaint);
+      canvas.drawRect(Rect.fromLTRB(x1, 10, x2, size.height - 10), recPaint);
     }
 
-    // Draw event markers (AI events as red dots)
-    final eventPaint = Paint()..color = Colors.red.withOpacity(0.8);
-    for (final e in events) {
-      final ts = e['timestamp'] as String? ?? '';
-      final parts = ts.split(' ');
-      if (parts.length < 2) continue;
-      final timeParts = parts[1].split(':');
-      if (timeParts.length < 3) continue;
-      final sec = int.parse(timeParts[0]) * 3600 + int.parse(timeParts[1]) * 60 + int.parse(timeParts[2]);
-      if (sec < viewStart || sec > viewEnd) continue;
+    // Draw AI Events
+    final eventPaint = Paint()..color = Colors.red;
+    for (final ev in events) {
+      final double sec = (ev['seconds'] as num?)?.toDouble() ?? 0.0;
+      if (sec < viewStart || sec > viewEnd) {
+        continue;
+      }
       final x = (sec - viewStart) / viewDuration * size.width;
-      canvas.drawCircle(Offset(x, size.height - 16), 3.5, eventPaint);
-      // Draw a small diamond marker for better visibility
-      final path = ui.Path()
-        ..moveTo(x, size.height - 20)
-        ..lineTo(x + 3, size.height - 16)
-        ..lineTo(x, size.height - 12)
-        ..lineTo(x - 3, size.height - 16)
-        ..close();
-      canvas.drawPath(path, eventPaint);
+      canvas.drawCircle(Offset(x, size.height / 2), 3, eventPaint);
     }
 
     // Draw time ticks
@@ -963,51 +1003,43 @@ class _TimelinePainter extends CustomPainter {
         continue;
       }
       final x = (t - viewStart) / viewDuration * size.width;
-      canvas.drawLine(Offset(x, size.height - 20), Offset(x, size.height - 12), tickPaint);
-      final hour = t ~/ 3600;
-      final min = (t % 3600) ~/ 60;
-      final label = '${hour.toString().padLeft(2, '0')}:${min.toString().padLeft(2, '0')}';
-      final tp = TextPainter(text: TextSpan(text: label, style: textStyle), textDirection: ui.TextDirection.ltr);
-      tp.layout();
-      tp.paint(canvas, Offset(x - tp.width / 2, size.height - 10));
+      canvas.drawLine(Offset(x, size.height - 18), Offset(x, size.height - 10), tickPaint);
+
+      // Label
+      final h = t ~/ 3600;
+      final m = (t % 3600) ~/ 60;
+      final timeStr = '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
+      final textPainter = TextPainter(
+        text: TextSpan(text: timeStr, style: textStyle),
+        textDirection: ui.TextDirection.ltr,
+      );
+      textPainter.layout();
+      textPainter.paint(canvas, Offset(x - textPainter.width / 2, size.height - 8));
     }
 
-    // Draw current position indicator with timestamp label
+    // Draw current play indicator line
     if (currentSeconds >= viewStart && currentSeconds <= viewEnd) {
       final x = (currentSeconds - viewStart) / viewDuration * size.width;
-      final posPaint = Paint()..color = const Color(0xFFFF3B30)..strokeWidth = 2;
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height - 20), posPaint);
+      final linePaint = Paint()
+        ..color = const Color(0xFFFF3B30)
+        ..strokeWidth = 2;
+      canvas.drawLine(Offset(x, 2), Offset(x, size.height - 2), linePaint);
 
-      // Triangle marker at top
-      final trianglePath = ui.Path()
-        ..moveTo(x - 5, 0)
-        ..lineTo(x + 5, 0)
-        ..lineTo(x, 6)
-        ..close();
-      canvas.drawPath(trianglePath, posPaint);
-
-      // Time label at top
-      final h = (currentSeconds / 3600).floor();
-      final m = ((currentSeconds % 3600) / 60).floor();
-      final s = (currentSeconds % 60).floor();
-      final timeLabel = '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
-      final labelPaint = Paint()..color = const Color(0xFFFF3B30);
-      const labelStyle = TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold);
-      final labelTp = TextPainter(text: TextSpan(text: timeLabel, style: labelStyle), textDirection: ui.TextDirection.ltr);
-      labelTp.layout();
-
-      // Background for label
-      final labelX = (x - labelTp.width / 2).clamp(0.0, size.width - labelTp.width);
-      final labelRect = RRect.fromRectAndRadius(
-        Rect.fromLTWH(labelX - 2, 7, labelTp.width + 4, labelTp.height + 2),
-        const Radius.circular(2),
-      );
-      canvas.drawRRect(labelRect, labelPaint);
-      labelTp.paint(canvas, Offset(labelX, 8));
+      // Triangle handle on top
+      final path = Path();
+      path.moveTo(x - 4, 0);
+      path.lineTo(x + 4, 0);
+      path.lineTo(x, 6);
+      path.close();
+      canvas.drawPath(path, Paint()..color = const Color(0xFFFF3B30));
     }
   }
 
   @override
-  bool shouldRepaint(covariant _TimelinePainter old) =>
-    old.currentSeconds != currentSeconds || old.videos != videos || old.zoom != zoom || old.events != events;
+  bool shouldRepaint(covariant _TimelinePainter oldDelegate) {
+    return oldDelegate.videos != videos ||
+        oldDelegate.events != events ||
+        oldDelegate.currentSeconds != currentSeconds ||
+        oldDelegate.zoom != zoom;
+  }
 }
