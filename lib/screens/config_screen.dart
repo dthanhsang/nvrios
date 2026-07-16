@@ -110,7 +110,7 @@ class _ConfigScreenState extends State<ConfigScreen> with AutomaticKeepAliveClie
                     } else {
                       ok = await _apiService.addCamera(data);
                     }
-                    if (ok && mounted) {
+                    if (ok && ctx.mounted) {
                       Navigator.pop(ctx);
                       _loadData();
                     }

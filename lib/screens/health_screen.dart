@@ -161,7 +161,7 @@ class _HealthScreenState extends State<HealthScreen> with AutomaticKeepAliveClie
                           );
                           if (ok == true) {
                             await _apiService.restartDvr();
-                            if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đang khởi động lại...')));
+                            if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đang khởi động lại...')));
                           }
                         },
                         icon: const Icon(Icons.restart_alt, size: 18),
@@ -174,7 +174,7 @@ class _HealthScreenState extends State<HealthScreen> with AutomaticKeepAliveClie
                       child: OutlinedButton.icon(
                         onPressed: () async {
                           final ok = await _apiService.cleanupFaces();
-                          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ok ? 'Đã dọn dẹp' : 'Lỗi')));
+                          if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ok ? 'Đã dọn dẹp' : 'Lỗi')));
                         },
                         icon: const Icon(Icons.cleaning_services, size: 18),
                         label: const Text('Dọn ảnh'),

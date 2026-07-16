@@ -1,10 +1,24 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/api_service.dart';
 import '../models/camera.dart';
+
+// ==================== GRID CELL MODEL ====================
+
+/// Represents one cell in the grid layout.
+/// Each cell can have an assigned camera and an HD/SD toggle.
+class _GridCell {
+  Camera? camera;
+  bool isHd;
+  GlobalKey<_MjpegStreamPlayerState> streamKey;
+
+  _GridCell({this.camera, this.isHd = false})
+      : streamKey = GlobalKey<_MjpegStreamPlayerState>();
+}
+
+// ==================== LIVE SCREEN ====================
 
 class LiveScreen extends StatefulWidget {
   const LiveScreen({super.key});
@@ -17,8 +31,15 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
   final _apiService = ApiService();
   List<Camera> _cameras = [];
   bool _isLoading = true;
-  int _columns = 1;
-  final Map<int, GlobalKey<_MjpegStreamPlayerState>> _streamKeys = {};
+
+  /// Current grid size: 1 = 1x1, 2 = 2x2, 3 = 3x3
+  int _gridSize = 1;
+
+  /// Grid cells — length = _gridSize * _gridSize
+  List<_GridCell> _cells = [];
+
+  /// Currently selected cell index (for camera assignment)
+  int? _selectedCellIndex;
 
   @override
   bool get wantKeepAlive => true;
@@ -26,7 +47,58 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
   @override
   void initState() {
     super.initState();
+    _initCells();
     _loadCameras();
+  }
+
+  /// Initialize cells for the current grid size.
+  void _initCells() {
+    final count = _gridSize * _gridSize;
+    _cells = List.generate(count, (_) => _GridCell());
+  }
+
+  /// Change grid size, preserving existing camera assignments where possible.
+  void _setGridSize(int size) {
+    if (size == _gridSize) return;
+    final oldCells = _cells;
+    _gridSize = size;
+    final newCount = size * size;
+
+    // Auto-quality: 1x1 = HD, multi = SD
+    final autoHd = size == 1;
+
+    _cells = List.generate(newCount, (i) {
+      if (i < oldCells.length) {
+        // Preserve existing assignment but update quality
+        return _GridCell(camera: oldCells[i].camera, isHd: autoHd);
+      }
+      return _GridCell(isHd: autoHd);
+    });
+
+    // If we shrunk, disconnect streams in removed cells (they'll be GC'd)
+    _selectedCellIndex = null;
+    setState(() {});
+
+    // Auto-assign cameras to empty cells if cameras are loaded
+    if (_cameras.isNotEmpty) {
+      _autoAssignCameras();
+    }
+  }
+
+  /// Auto-assign cameras to empty grid cells.
+  void _autoAssignCameras() {
+    final autoHd = _gridSize == 1;
+    int cameraIdx = 0;
+    for (int i = 0; i < _cells.length && cameraIdx < _cameras.length; i++) {
+      if (_cells[i].camera == null) {
+        _cells[i] = _GridCell(camera: _cameras[cameraIdx], isHd: autoHd);
+        cameraIdx++;
+      } else {
+        // Skip cameras already assigned
+        cameraIdx++;
+      }
+    }
+    setState(() {});
   }
 
   Future<void> _loadCameras() async {
@@ -34,14 +106,14 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
     if (mounted) {
       setState(() {
         _cameras = cameras.where((c) => c.enabled).toList();
-        for (final cam in _cameras) {
-          _streamKeys.putIfAbsent(cam.id, () => GlobalKey<_MjpegStreamPlayerState>());
-        }
         _isLoading = false;
       });
+      // Auto-assign cameras to grid cells
+      _autoAssignCameras();
     }
   }
 
+  /// Open fullscreen for a camera (double-tap).
   void _openFullscreen(Camera camera) {
     Navigator.push(
       context,
@@ -51,19 +123,124 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
     );
   }
 
+  /// Show camera picker drawer for the selected cell.
+  void _showCameraPicker(int cellIndex) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1C1C1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[600],
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'Chọn camera',
+                  style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+              ),
+              // "None" option to clear the cell
+              ListTile(
+                leading: const Icon(Icons.clear, color: Colors.grey),
+                title: const Text('Bỏ chọn', style: TextStyle(color: Colors.grey)),
+                onTap: () {
+                  setState(() {
+                    _cells[cellIndex] = _GridCell(isHd: _gridSize == 1);
+                    _selectedCellIndex = null;
+                  });
+                  Navigator.pop(ctx);
+                },
+              ),
+              const Divider(color: Colors.grey, height: 1),
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _cameras.length,
+                  itemBuilder: (_, i) {
+                    final cam = _cameras[i];
+                    // Check if this camera is already assigned to another cell
+                    final alreadyUsed = _cells.any((c) => c.camera?.id == cam.id);
+                    return ListTile(
+                      leading: Icon(
+                        Icons.videocam,
+                        color: alreadyUsed ? Colors.grey : const Color(0xFFFF3B30),
+                      ),
+                      title: Text(
+                        cam.name,
+                        style: TextStyle(
+                          color: alreadyUsed ? Colors.grey : Colors.white,
+                        ),
+                      ),
+                      subtitle: alreadyUsed
+                          ? const Text('Đang sử dụng', style: TextStyle(color: Colors.grey, fontSize: 11))
+                          : null,
+                      onTap: () {
+                        setState(() {
+                          _cells[cellIndex] = _GridCell(
+                            camera: cam,
+                            isHd: _gridSize == 1,
+                          );
+                          _selectedCellIndex = null;
+                        });
+                        Navigator.pop(ctx);
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// Snapshot placeholder for a cell.
+  void _captureSnapshot(int cellIndex) {
+    final cell = _cells[cellIndex];
+    if (cell.camera == null) return;
+    final state = cell.streamKey.currentState;
+    if (state != null && state._currentFrame != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Đã chụp: ${cell.camera!.name}'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Không có khung hình để chụp'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
     return Scaffold(
+      backgroundColor: Colors.black,
       appBar: AppBar(
         title: const Text('Trực tiếp'),
+        backgroundColor: const Color(0xFF1C1C1E),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.grid_view),
-            color: _columns == 2 ? const Color(0xFFFF3B30) : Colors.grey,
-            onPressed: () => setState(() => _columns = _columns == 1 ? 2 : 1),
-            tooltip: 'Đổi bố cục',
-          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadCameras,
@@ -72,116 +249,338 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
         ],
       ),
       body: _isLoading
-        ? const Center(child: CircularProgressIndicator())
-        : _cameras.isEmpty
-          ? const Center(child: Text('Không có camera nào', style: TextStyle(color: Colors.grey)))
-          : RefreshIndicator(
-              onRefresh: _loadCameras,
-              child: GridView.builder(
-                padding: const EdgeInsets.all(8),
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: _columns,
-                  crossAxisSpacing: 8,
-                  mainAxisSpacing: 8,
-                  childAspectRatio: 16 / 10,
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFFFF3B30)))
+          : _cameras.isEmpty
+              ? const Center(
+                  child: Text('Không có camera nào',
+                      style: TextStyle(color: Colors.grey)))
+              : Column(
+                  children: [
+                    // Grid area
+                    Expanded(child: _buildGrid()),
+                    // Bottom toolbar with grid selector
+                    _buildBottomToolbar(),
+                  ],
                 ),
-                itemCount: _cameras.length,
-                itemBuilder: (context, index) {
-                  final camera = _cameras[index];
-                  return _CameraTile(
-                    camera: camera,
-                    streamKey: _streamKeys[camera.id]!,
-                    apiService: _apiService,
-                    onFullscreen: () => _openFullscreen(camera),
-                  );
-                },
-              ),
+    );
+  }
+
+  Widget _buildGrid() {
+    return Padding(
+      padding: const EdgeInsets.all(4),
+      child: GridView.builder(
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: _gridSize,
+          crossAxisSpacing: 3,
+          mainAxisSpacing: 3,
+          childAspectRatio: 16 / 10,
+        ),
+        itemCount: _cells.length,
+        itemBuilder: (context, index) {
+          return _buildGridCell(index);
+        },
+      ),
+    );
+  }
+
+  Widget _buildGridCell(int index) {
+    final cell = _cells[index];
+    final isSelected = _selectedCellIndex == index;
+
+    return GestureDetector(
+      // Single tap to select cell
+      onTap: () {
+        if (cell.camera != null) {
+          setState(() {
+            _selectedCellIndex = isSelected ? null : index;
+          });
+        } else {
+          // No camera assigned — open picker immediately
+          _showCameraPicker(index);
+        }
+      },
+      // Double tap to go fullscreen
+      onDoubleTap: () {
+        if (cell.camera != null) {
+          _openFullscreen(cell.camera!);
+        }
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected ? const Color(0xFFFF3B30) : Colors.transparent,
+            width: 2,
+          ),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Container(color: const Color(0xFF1C1C1E)),
+              if (cell.camera != null) ...[
+                // MJPEG stream
+                MjpegStreamPlayer(
+                  key: cell.streamKey,
+                  streamUrl: _apiService.getMjpegStreamUrl(
+                    cell.camera!.go2rtcSrc,
+                    hd: cell.isHd,
+                  ),
+                ),
+                // Camera name overlay
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
+                        colors: [Colors.black87, Colors.transparent],
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            cell.camera!.name,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: _gridSize == 1 ? 13 : 10,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        // LIVE badge
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFF3B30),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.circle, color: Colors.white, size: 4),
+                              const SizedBox(width: 2),
+                              Text(
+                                'LIVE',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: _gridSize == 1 ? 9 : 7,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                // HD/SD badge (top-left)
+                Positioned(
+                  top: 4,
+                  left: 4,
+                  child: GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        cell.isHd = !cell.isHd;
+                        // Force stream key refresh
+                        _cells[index] = _GridCell(
+                          camera: cell.camera,
+                          isHd: cell.isHd,
+                        );
+                      });
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: cell.isHd ? const Color(0xFFFF3B30) : Colors.black54,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                      child: Text(
+                        cell.isHd ? 'HD' : 'SD',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: _gridSize == 1 ? 10 : 8,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                // Cell action buttons (when selected)
+                if (isSelected)
+                  Positioned(
+                    top: 4,
+                    right: 4,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Snapshot button
+                        _CellActionButton(
+                          icon: Icons.camera_alt,
+                          onTap: () => _captureSnapshot(index),
+                          size: _gridSize == 1 ? 28 : 22,
+                        ),
+                        const SizedBox(width: 4),
+                        // Fullscreen button
+                        _CellActionButton(
+                          icon: Icons.fullscreen,
+                          onTap: () => _openFullscreen(cell.camera!),
+                          size: _gridSize == 1 ? 28 : 22,
+                        ),
+                        const SizedBox(width: 4),
+                        // Change camera button
+                        _CellActionButton(
+                          icon: Icons.swap_horiz,
+                          onTap: () => _showCameraPicker(index),
+                          size: _gridSize == 1 ? 28 : 22,
+                        ),
+                      ],
+                    ),
+                  ),
+              ] else ...[
+                // Empty cell — tap to assign camera
+                Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.add_circle_outline,
+                        color: Colors.grey[600],
+                        size: _gridSize == 1 ? 48 : 28,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Chọn camera',
+                        style: TextStyle(
+                          color: Colors.grey[600],
+                          fontSize: _gridSize == 1 ? 13 : 10,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomToolbar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: const BoxDecoration(
+        color: Color(0xFF1C1C1E),
+        border: Border(top: BorderSide(color: Colors.white10)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _GridSizeButton(
+              label: '1×1',
+              icon: Icons.crop_square,
+              isActive: _gridSize == 1,
+              onTap: () => _setGridSize(1),
             ),
+            const SizedBox(width: 16),
+            _GridSizeButton(
+              label: '2×2',
+              icon: Icons.grid_view,
+              isActive: _gridSize == 2,
+              onTap: () => _setGridSize(2),
+            ),
+            const SizedBox(width: 16),
+            _GridSizeButton(
+              label: '3×3',
+              icon: Icons.apps,
+              isActive: _gridSize == 3,
+              onTap: () => _setGridSize(3),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
 
-class _CameraTile extends StatelessWidget {
-  final Camera camera;
-  final GlobalKey<_MjpegStreamPlayerState> streamKey;
-  final ApiService apiService;
-  final VoidCallback onFullscreen;
+// ==================== SMALL UI COMPONENTS ====================
 
-  const _CameraTile({
-    required this.camera,
-    required this.streamKey,
-    required this.apiService,
-    required this.onFullscreen,
+class _CellActionButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+  final double size;
+
+  const _CellActionButton({
+    required this.icon,
+    required this.onTap,
+    this.size = 28,
   });
 
   @override
   Widget build(BuildContext context) {
-    final streamUrl = apiService.getMjpegStreamUrl(camera.go2rtcSrc);
     return GestureDetector(
-      onTap: onFullscreen,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Stack(
-          fit: StackFit.expand,
+      onTap: onTap,
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(size / 4),
+        ),
+        child: Icon(icon, color: Colors.white, size: size * 0.6),
+      ),
+    );
+  }
+}
+
+class _GridSizeButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool isActive;
+  final VoidCallback onTap;
+
+  const _GridSizeButton({
+    required this.label,
+    required this.icon,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isActive ? const Color(0xFFFF3B30) : Colors.white10,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Container(color: Colors.black),
-            MjpegStreamPlayer(
-              key: streamKey,
-              streamUrl: streamUrl,
-            ),
-            // Camera name overlay
-            Positioned(
-              bottom: 0, left: 0, right: 0,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.bottomCenter,
-                    end: Alignment.topCenter,
-                    colors: [Colors.black87, Colors.transparent],
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        camera.name,
-                        style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFF3B30),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.circle, color: Colors.white, size: 6),
-                          SizedBox(width: 4),
-                          Text('LIVE', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            // Fullscreen button
-            Positioned(
-              top: 8, right: 8,
-              child: GestureDetector(
-                onTap: onFullscreen,
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: const Icon(Icons.fullscreen, color: Colors.white, size: 20),
-                ),
+            Icon(icon, color: isActive ? Colors.white : Colors.grey, size: 18),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: isActive ? Colors.white : Colors.grey,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ],
@@ -441,6 +840,7 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> with AutomaticKee
   Uint8List? _currentFrame;
   bool _isConnecting = true;
   bool _hasError = false;
+  // ignore: unused_field
   String _errorMessage = '';
   int _retryCount = 0;
   static const int _maxRetries = 5;
@@ -521,6 +921,7 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> with AutomaticKee
             }
           }
 
+          // ignore: unnecessary_null_comparison
           if (contentLength != null && buffer.length >= contentLength) {
             final frameData = Uint8List.fromList(buffer.sublist(0, contentLength));
             buffer = buffer.sublist(contentLength);
