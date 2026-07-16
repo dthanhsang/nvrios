@@ -10,209 +10,163 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _serverController = TextEditingController(text: "https://dvr.dothanhsang.id.vn");
-  final _usernameController = TextEditingController(text: "admin");
-  final _passwordController = TextEditingController();
   final _apiService = ApiService();
+  final _serverController = TextEditingController(text: 'https://dvr.dothanhsang.id.vn');
+  final _usernameController = TextEditingController(text: 'admin');
+  final _passwordController = TextEditingController();
   bool _isLoading = false;
-  String _errorMessage = "";
+  bool _obscurePassword = true;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _checkExistingLogin();
+    _tryAutoLogin();
   }
 
-  Future<void> _checkExistingLogin() async {
+  Future<void> _tryAutoLogin() async {
     await _apiService.init();
-    if (_apiService.baseUrl.isNotEmpty && _apiService.sessionToken.isNotEmpty) {
-      _navigateToMain();
+    if (_apiService.isAuthenticated) {
+      setState(() => _isLoading = true);
+      final valid = await _apiService.isSessionValid();
+      if (valid && mounted) {
+        _navigateToMain();
+        return;
+      }
+      if (mounted) setState(() => _isLoading = false);
+    }
+    if (_apiService.baseUrl.isNotEmpty) {
+      _serverController.text = _apiService.baseUrl;
     }
   }
 
-  void _navigateToMain() {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const MainScreen()),
-    );
-  }
-
-  Future<void> _handleLogin() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = "";
-    });
-
-    final serverUrl = _serverController.text.trim();
+  Future<void> _login() async {
+    final server = _serverController.text.trim();
     final username = _usernameController.text.trim();
     final password = _passwordController.text;
 
-    if (serverUrl.isEmpty || username.isEmpty || password.isEmpty) {
-      setState(() {
-        _isLoading = false;
-        _errorMessage = "Vui lòng nhập đầy đủ thông tin.";
-      });
+    if (server.isEmpty || username.isEmpty || password.isEmpty) {
+      setState(() => _error = 'Vui lòng điền đầy đủ thông tin');
       return;
     }
 
-    await _apiService.setBaseUrl(serverUrl);
+    setState(() { _isLoading = true; _error = null; });
+
+    _apiService.setBaseUrl(server);
     final success = await _apiService.login(username, password);
 
-    setState(() {
-      _isLoading = false;
-    });
+    if (!mounted) return;
 
     if (success) {
       _navigateToMain();
     } else {
       setState(() {
-        _errorMessage = "Đăng nhập thất bại: ${_apiService.lastError}";
+        _isLoading = false;
+        _error = 'Sai tên đăng nhập hoặc mật khẩu';
       });
     }
   }
 
+  void _navigateToMain() {
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => const MainScreen()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Scaffold(
-      backgroundColor: const Color(0xFF0F1115),
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24.0),
-          child: Card(
-            color: const Color(0xFF161920),
-            elevation: 8.0,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
-            child: Padding(
-              padding: const EdgeInsets.all(24.0),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF0F1115), Color(0xFF1A1D24)],
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
               child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(
-                    Icons.security,
-                    size: 80,
-                    color: Color(0xFFFF3B30),
+                  // Logo
+                  Container(
+                    width: 80, height: 80,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF3B30).withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Icon(Icons.videocam_rounded, color: Color(0xFFFF3B30), size: 42),
                   ),
                   const SizedBox(height: 16),
-                  const Text(
-                    "Đầu ghi hình DVR",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFFE2E8F0),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    "Đăng nhập hệ thống giám sát",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Color(0xFF7E8B9B),
-                    ),
-                  ),
-                  const SizedBox(height: 32),
+                  const Text('WebDVR', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white)),
+                  const SizedBox(height: 6),
+                  Text('Hệ thống camera giám sát', style: TextStyle(fontSize: 14, color: Colors.grey[500])),
+                  const SizedBox(height: 40),
+
+                  // Server URL
                   TextField(
                     controller: _serverController,
-                    style: const TextStyle(color: Color(0xFFE2E8F0)),
-                    decoration: InputDecoration(
-                      labelText: "Địa chỉ đầu ghi (Server URL)",
-                      labelStyle: const TextStyle(color: Color(0xFF7E8B9B)),
-                      prefixIcon: const Icon(Icons.dns, color: Color(0xFF7E8B9B)),
-                      filled: true,
-                      fillColor: const Color(0xFF1E2330),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: Color(0xFFFF3B30)),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: Color(0xFF2A2F3A)),
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'Địa chỉ máy chủ',
+                      prefixIcon: Icon(Icons.dns_outlined),
+                      hintText: 'https://example.com',
                     ),
+                    keyboardType: TextInputType.url,
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 16),
+
+                  // Username
                   TextField(
                     controller: _usernameController,
-                    style: const TextStyle(color: Color(0xFFE2E8F0)),
-                    decoration: InputDecoration(
-                      labelText: "Tên đăng nhập",
-                      labelStyle: const TextStyle(color: Color(0xFF7E8B9B)),
-                      prefixIcon: const Icon(Icons.person, color: Color(0xFF7E8B9B)),
-                      filled: true,
-                      fillColor: const Color(0xFF1E2330),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: Color(0xFFFF3B30)),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: Color(0xFF2A2F3A)),
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'Tên đăng nhập',
+                      prefixIcon: Icon(Icons.person_outline),
                     ),
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 16),
+
+                  // Password
                   TextField(
                     controller: _passwordController,
-                    style: const TextStyle(color: Color(0xFFE2E8F0)),
+                    style: const TextStyle(color: Colors.white),
+                    obscureText: _obscurePassword,
                     decoration: InputDecoration(
-                      labelText: "Mật khẩu",
-                      labelStyle: const TextStyle(color: Color(0xFF7E8B9B)),
-                      prefixIcon: const Icon(Icons.lock, color: Color(0xFF7E8B9B)),
-                      filled: true,
-                      fillColor: const Color(0xFF1E2330),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: Color(0xFFFF3B30)),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: Color(0xFF2A2F3A)),
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
+                      labelText: 'Mật khẩu',
+                      prefixIcon: const Icon(Icons.lock_outline),
+                      suffixIcon: IconButton(
+                        icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
+                        onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
                       ),
                     ),
-                    obscureText: true,
+                    onSubmitted: (_) => _login(),
                   ),
-                  if (_errorMessage.isNotEmpty) ...[
-                    const SizedBox(height: 20),
-                    Text(
-                      _errorMessage,
-                      style: const TextStyle(color: Color(0xFFFF3B30)),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                  const SizedBox(height: 32),
-                  ElevatedButton(
-                    onPressed: _isLoading ? null : _handleLogin,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFFF3B30),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    ),
-                    child: _isLoading
-                        ? const SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 2,
-                            ),
-                          )
-                        : const Text(
-                            "Đăng nhập",
-                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                          ),
+                  const SizedBox(height: 8),
+
+                  // Error
+                  if (_error != null) Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(_error!, style: const TextStyle(color: Color(0xFFFF3B30), fontSize: 13)),
                   ),
+                  const SizedBox(height: 24),
+
+                  // Login button
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _isLoading ? null : _login,
+                      child: _isLoading
+                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Text('Đăng nhập', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Text('Phiên bản 2.0.0', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
                 ],
               ),
             ),
@@ -220,5 +174,13 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _serverController.dispose();
+    _usernameController.dispose();
+    _passwordController.dispose();
+    super.dispose();
   }
 }

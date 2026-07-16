@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../models/camera.dart';
+import '../models/face_event.dart';
 
 class EventsScreen extends StatefulWidget {
   const EventsScreen({super.key});
@@ -10,12 +12,10 @@ class EventsScreen extends StatefulWidget {
 
 class _EventsScreenState extends State<EventsScreen> with AutomaticKeepAliveClientMixin {
   final _apiService = ApiService();
-  List<dynamic> _events = [];
-  Map<int, String> _cameraNames = {};
+  List<FaceEvent> _events = [];
+  List<Camera> _cameras = [];
+  int? _filterCameraId;
   bool _isLoading = true;
-  String? _error;
-  int _limit = 50;
-  int? _selectedCamId;
 
   @override
   bool get wantKeepAlive => true;
@@ -23,160 +23,62 @@ class _EventsScreenState extends State<EventsScreen> with AutomaticKeepAliveClie
   @override
   void initState() {
     super.initState();
-    _loadInitialData();
+    _loadData();
   }
 
-  Future<void> _loadInitialData() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-
-    try {
-      // Load camera names first
-      final cameras = await _apiService.getCameras();
-      final Map<int, String> names = {};
-      for (var cam in cameras) {
-        if (cam['id'] != null) {
-          names[cam['id']] = cam['name'] ?? 'Camera ${cam['id']}';
-        }
-      }
-
-      final events = await _apiService.getFaceEvents(limit: _limit, cameraId: _selectedCamId);
-
+  Future<void> _loadData() async {
+    setState(() => _isLoading = true);
+    final cameras = await _apiService.getCameras();
+    final events = await _apiService.getFaceEvents(limit: 50, cameraId: _filterCameraId);
+    if (mounted) {
       setState(() {
-        _cameraNames = names;
+        _cameras = cameras;
         _events = events;
         _isLoading = false;
       });
-    } catch (e) {
-      setState(() {
-        _error = e.toString();
-        _isLoading = false;
-      });
     }
   }
 
-  Future<void> _refreshEvents() async {
-    try {
-      final events = await _apiService.getFaceEvents(limit: _limit, cameraId: _selectedCamId);
-      setState(() {
-        _events = events;
-      });
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Lỗi tải lại: $e"), backgroundColor: Colors.red),
-      );
-    }
-  }
-
-  String _getCameraName(dynamic camIdOpt) {
-    if (camIdOpt == null) return "Không rõ";
-    int? camId;
-    if (camIdOpt is String) camId = int.tryParse(camIdOpt);
-    else if (camIdOpt is int) camId = camIdOpt;
-
-    if (camId != null && _cameraNames.containsKey(camId)) {
-      return _cameraNames[camId]!;
-    }
-    return "Camera $camIdOpt";
-  }
-
-  Map<String, String> _getImageHeaders() {
-    return _apiService.authHeaders;
-  }
-
-  void _showImageDialog(dynamic event) {
-    final base = _apiService.baseUrl;
-    final imageUrl = "$base${event['url']}";
-    final cameraName = _getCameraName(event['camera_id']);
-
+  void _showEventDetail(FaceEvent event) {
     showDialog(
       context: context,
-      builder: (context) => Dialog(
-        backgroundColor: const Color(0xFF161920),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      builder: (ctx) => Dialog(
+        backgroundColor: const Color(0xFF1E2330),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Header
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: const BoxDecoration(
-                color: Color(0xFF1E2330),
-                borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.face, color: Color(0xFFFF3B30), size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      "$cameraName \u2022 ${event['time'] ?? ''}",
-                      style: const TextStyle(
-                        color: Color(0xFFE2E8F0),
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Color(0xFF7E8B9B), size: 20),
-                    onPressed: () => Navigator.pop(context),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                ],
-              ),
-            ),
-            // Image
-            Container(
-              constraints: const BoxConstraints(maxHeight: 400),
-              child: InteractiveViewer(
-                child: Image.network(
-                  imageUrl,
-                  headers: _getImageHeaders(),
-                  fit: BoxFit.contain,
-                  loadingBuilder: (context, child, progress) {
-                    if (progress == null) return child;
-                    return const SizedBox(
-                      height: 200,
-                      child: Center(child: CircularProgressIndicator(color: Color(0xFFFF3B30))),
-                    );
-                  },
-                  errorBuilder: (context, error, stackTrace) {
-                    return const SizedBox(
-                      height: 200,
-                      child: Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.broken_image, size: 48, color: Color(0xFF7E8B9B)),
-                            SizedBox(height: 8),
-                            Text("Không thể tải ảnh",
-                              style: TextStyle(color: Color(0xFF7E8B9B))),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
-            // Footer info
             Padding(
               padding: const EdgeInsets.all(12),
               child: Row(
                 children: [
-                  const Icon(Icons.schedule, color: Color(0xFF7E8B9B), size: 14),
-                  const SizedBox(width: 6),
-                  Text(
-                    "${event['date'] ?? ''} ${event['time'] ?? ''}",
-                    style: const TextStyle(fontSize: 13, color: Color(0xFF7E8B9B)),
-                  ),
+                  const Icon(Icons.face, color: Color(0xFFFF3B30), size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(event.cameraName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
+                  IconButton(icon: const Icon(Icons.close, color: Colors.grey, size: 20), onPressed: () => Navigator.pop(ctx)),
                 ],
               ),
+            ),
+            InteractiveViewer(
+              minScale: 1.0,
+              maxScale: 5.0,
+              child: Image.network(
+                event.imageUrl,
+                headers: _apiService.authHeaders,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const SizedBox(
+                  height: 200,
+                  child: Center(child: Icon(Icons.broken_image, color: Colors.grey, size: 48)),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(event.timestamp, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+            ),
+            if (event.details != null) Padding(
+              padding: const EdgeInsets.only(left: 12, right: 12, bottom: 12),
+              child: Text(event.details!, style: const TextStyle(color: Colors.white70, fontSize: 12)),
             ),
           ],
         ),
@@ -184,137 +86,86 @@ class _EventsScreenState extends State<EventsScreen> with AutomaticKeepAliveClie
     );
   }
 
-  Widget _buildCameraSelector() {
-    if (_cameraNames.isEmpty) return const SizedBox.shrink();
-    
-    final camIds = [null, ..._cameraNames.keys];
-    
-    return Container(
-      height: 44,
-      color: const Color(0xFF161920),
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        itemCount: camIds.length,
-        itemBuilder: (context, index) {
-          final camId = camIds[index];
-          final isActive = camId == _selectedCamId;
-          final label = camId == null ? "Tất cả" : (_cameraNames[camId] ?? 'Camera $camId');
-          
-          return Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: GestureDetector(
-              onTap: () {
-                setState(() {
-                  _selectedCamId = camId;
-                });
-                _loadInitialData();
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                decoration: BoxDecoration(
-                  color: isActive ? const Color(0xFFFF3B30) : const Color(0xFF1E2330),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: isActive ? const Color(0xFFFF3B30) : const Color(0xFF2A3142),
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(camId == null ? Icons.all_inclusive : Icons.videocam, size: 14,
-                      color: isActive ? Colors.white : const Color(0xFF7E8B9B)),
-                    const SizedBox(width: 6),
-                    Text(
-                      label,
-                      style: TextStyle(
-                        color: isActive ? Colors.white : const Color(0xFF7E8B9B),
-                        fontSize: 12, fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     super.build(context);
-
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Nhận diện khuôn mặt"),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh, size: 20),
-            onPressed: _loadInitialData,
-          ),
-        ],
-      ),
+      appBar: AppBar(title: const Text('Sự kiện')),
       body: Column(
         children: [
-          _buildCameraSelector(),
+          // Camera filter
+          SizedBox(
+            height: 40,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: ChoiceChip(
+                    label: const Text('Tất cả', style: TextStyle(fontSize: 12)),
+                    selected: _filterCameraId == null,
+                    selectedColor: const Color(0xFFFF3B30),
+                    backgroundColor: const Color(0xFF1E2330),
+                    onSelected: (_) {
+                      setState(() => _filterCameraId = null);
+                      _loadData();
+                    },
+                  ),
+                ),
+                ..._cameras.map((cam) => Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: ChoiceChip(
+                    label: Text(cam.name, style: const TextStyle(fontSize: 12)),
+                    selected: _filterCameraId == cam.id,
+                    selectedColor: const Color(0xFFFF3B30),
+                    backgroundColor: const Color(0xFF1E2330),
+                    onSelected: (_) {
+                      setState(() => _filterCameraId = cam.id);
+                      _loadData();
+                    },
+                  ),
+                )),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
+
+          // Events grid
           Expanded(
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator(color: Color(0xFFFF3B30)))
-                : _error != null
-                    ? _buildErrorView()
-                    : _events.isEmpty
-                        ? _buildEmptyState()
-                        : RefreshIndicator(
-                            onRefresh: _refreshEvents,
-                            color: const Color(0xFFFF3B30),
-                            child: GridView.builder(
-                        padding: const EdgeInsets.all(8),
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          crossAxisSpacing: 8,
-                          mainAxisSpacing: 8,
-                          childAspectRatio: 0.85,
-                        ),
-                        itemCount: _events.length,
-                        itemBuilder: (context, index) {
-                          final ev = _events[index];
-                          final base = _apiService.baseUrl;
-                          final imageUrl = "$base${ev['url']}";
-                          final cameraName = _getCameraName(ev['camera_id']);
-
-                          return GestureDetector(
-                            onTap: () => _showImageDialog(ev),
+              ? const Center(child: CircularProgressIndicator())
+              : _events.isEmpty
+                ? const Center(child: Text('Không có sự kiện', style: TextStyle(color: Colors.grey)))
+                : RefreshIndicator(
+                    onRefresh: _loadData,
+                    child: GridView.builder(
+                      padding: const EdgeInsets.all(8),
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 2,
+                        crossAxisSpacing: 8,
+                        mainAxisSpacing: 8,
+                        childAspectRatio: 0.85,
+                      ),
+                      itemCount: _events.length,
+                      itemBuilder: (context, i) {
+                        final event = _events[i];
+                        return GestureDetector(
+                          onTap: () => _showEventDetail(event),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
                             child: Container(
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF161920),
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(color: const Color(0xFF232731)),
-                              ),
-                              clipBehavior: Clip.antiAlias,
+                              color: const Color(0xFF1E2330),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
                                   Expanded(
-                                    child: Container(
-                                      color: const Color(0xFF1E2330),
-                                      child: Image.network(
-                                        imageUrl,
-                                        headers: _getImageHeaders(),
-                                        fit: BoxFit.cover,
-                                        loadingBuilder: (context, child, progress) {
-                                          if (progress == null) return child;
-                                          return const Center(
-                                            child: CircularProgressIndicator(
-                                              color: Color(0xFFFF3B30), strokeWidth: 2),
-                                          );
-                                        },
-                                        errorBuilder: (context, error, stackTrace) {
-                                          return const Center(
-                                            child: Icon(Icons.person, size: 40, color: Color(0xFF7E8B9B)),
-                                          );
-                                        },
+                                    child: Image.network(
+                                      event.imageUrl,
+                                      headers: _apiService.authHeaders,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => const Center(
+                                        child: Icon(Icons.broken_image, color: Colors.grey),
                                       ),
                                     ),
                                   ),
@@ -323,27 +174,12 @@ class _EventsScreenState extends State<EventsScreen> with AutomaticKeepAliveClie
                                     child: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
+                                        Text(event.cameraName, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis),
+                                        const SizedBox(height: 2),
                                         Text(
-                                          cameraName,
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold, fontSize: 12,
-                                            color: Color(0xFFE2E8F0),
-                                          ),
+                                          event.timestamp,
+                                          style: const TextStyle(color: Color(0xFFFF3B30), fontSize: 10),
                                           overflow: TextOverflow.ellipsis,
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            Text(
-                                              ev['time'] ?? '',
-                                              style: const TextStyle(color: Color(0xFFFF3B30), fontSize: 11, fontWeight: FontWeight.w600),
-                                            ),
-                                            Text(
-                                              ev['date'] ?? '',
-                                              style: const TextStyle(color: Color(0xFF7E8B9B), fontSize: 10),
-                                            ),
-                                          ],
                                         ),
                                       ],
                                     ),
@@ -351,54 +187,11 @@ class _EventsScreenState extends State<EventsScreen> with AutomaticKeepAliveClie
                                 ],
                               ),
                             ),
-                          );
-                        },
-                      ),
+                          ),
+                        );
+                      },
                     ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildErrorView() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.error_outline, size: 48, color: Colors.red),
-            const SizedBox(height: 16),
-            Text("Lỗi tải sự kiện:\n$_error", textAlign: TextAlign.center,
-              style: const TextStyle(color: Color(0xFFE2E8F0))),
-            const SizedBox(height: 16),
-            ElevatedButton.icon(
-              onPressed: _loadInitialData,
-              icon: const Icon(Icons.refresh),
-              label: const Text("Tải lại"),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.face_retouching_off, size: 64, color: Color(0xFF7E8B9B)),
-          const SizedBox(height: 16),
-          const Text("Không có sự kiện khuôn mặt nào gần đây.",
-            style: TextStyle(color: Color(0xFF7E8B9B), fontSize: 15),
-          ),
-          const SizedBox(height: 16),
-          ElevatedButton.icon(
-            onPressed: _loadInitialData,
-            icon: const Icon(Icons.refresh),
-            label: const Text("Tải lại"),
+                  ),
           ),
         ],
       ),
