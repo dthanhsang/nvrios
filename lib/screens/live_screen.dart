@@ -293,7 +293,15 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
       onTap: () {
         if (cell.camera != null) {
           setState(() {
-            _selectedCellIndex = isSelected ? null : index;
+            if (isSelected) {
+              _selectedCellIndex = null;
+              cell.isHd = _gridSize == 1;
+            } else {
+              for (int i = 0; i < _cells.length; i++) {
+                _cells[i].isHd = (_gridSize == 1) || (i == index);
+              }
+              _selectedCellIndex = index;
+            }
           });
         } else {
           // No camera assigned — open picker immediately

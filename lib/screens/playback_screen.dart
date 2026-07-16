@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
@@ -195,6 +196,28 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
         );
       }
     }
+  }
+
+  void _enterFullscreen() {
+    if (_videoPlayerController == null || !_isPlayerInitialized) return;
+    
+    _videoPlayerController!.removeListener(_videoPlayerListener);
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _FullscreenPlaybackScreen(
+          controller: _videoPlayerController!,
+          cameraName: _selectedCamera?.name ?? 'Camera',
+          date: _selectedDate ?? '',
+        ),
+      ),
+    ).then((_) {
+      if (mounted && _videoPlayerController != null) {
+        _videoPlayerController!.addListener(_videoPlayerListener);
+        setState(() {});
+      }
+    });
   }
 
   void _onVideoEnded() {
@@ -729,6 +752,25 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
               ),
             ),
           ),
+        Positioned(
+          bottom: 8,
+          right: 8,
+          child: GestureDetector(
+            onTap: _enterFullscreen,
+            child: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.6),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Icon(
+                Icons.fullscreen,
+                color: Colors.white,
+                size: 20,
+              ),
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -1041,5 +1083,202 @@ class _TimelinePainter extends CustomPainter {
         oldDelegate.events != events ||
         oldDelegate.currentSeconds != currentSeconds ||
         oldDelegate.zoom != zoom;
+  }
+}
+
+class _FullscreenPlaybackScreen extends StatefulWidget {
+  final VideoPlayerController controller;
+  final String cameraName;
+  final String date;
+
+  const _FullscreenPlaybackScreen({
+    required this.controller,
+    required this.cameraName,
+    required this.date,
+  });
+
+  @override
+  State<_FullscreenPlaybackScreen> createState() => _FullscreenPlaybackScreenState();
+}
+
+class _FullscreenPlaybackScreenState extends State<_FullscreenPlaybackScreen> {
+  bool _showControls = true;
+  Timer? _hideTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    _startHideTimer();
+  }
+
+  @override
+  void dispose() {
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+    ]);
+    _hideTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startHideTimer() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) setState(() => _showControls = false);
+    });
+  }
+
+  void _toggleControls() {
+    setState(() => _showControls = !_showControls);
+    if (_showControls) _startHideTimer();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: GestureDetector(
+        onTap: _toggleControls,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Center(
+              child: AspectRatio(
+                aspectRatio: widget.controller.value.aspectRatio,
+                child: VideoPlayer(widget.controller),
+              ),
+            ),
+            if (_showControls) ...[
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: Container(
+                  height: 60,
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Colors.black87, Colors.transparent],
+                    ),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back, color: Colors.white),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '${widget.cameraName} - Xem lại ${widget.date}',
+                        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Center(
+                child: GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      if (widget.controller.value.isPlaying) {
+                        widget.controller.pause();
+                      } else {
+                        widget.controller.play();
+                      }
+                    });
+                    _startHideTimer();
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: const BoxDecoration(
+                      color: Colors.black54,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      widget.controller.value.isPlaying ? Icons.pause : Icons.play_arrow,
+                      size: 50,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: Container(
+                  height: 60,
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.bottomCenter,
+                      end: Alignment.topCenter,
+                      colors: [Colors.black87, Colors.transparent],
+                    ),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Row(
+                    children: [
+                      ValueListenableBuilder(
+                        valueListenable: widget.controller,
+                        builder: (context, VideoPlayerValue value, child) {
+                          final position = value.position;
+                          final duration = value.duration;
+                          return Text(
+                            '${_formatDuration(position)} / ${_formatDuration(duration)}',
+                            style: const TextStyle(color: Colors.white, fontSize: 12),
+                          );
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ValueListenableBuilder(
+                          valueListenable: widget.controller,
+                          builder: (context, VideoPlayerValue value, child) {
+                            final position = value.position.inMilliseconds.toDouble();
+                            final duration = value.duration.inMilliseconds.toDouble();
+                            return SliderTheme(
+                              data: SliderTheme.of(context).copyWith(
+                                trackHeight: 3.0,
+                                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6.0),
+                              ),
+                              child: Slider(
+                                activeColor: const Color(0xFFFF3B30),
+                                inactiveColor: Colors.white24,
+                                value: duration > 0 ? position.clamp(0.0, duration) : 0.0,
+                                max: duration > 0 ? duration : 1.0,
+                                onChanged: (val) {
+                                  widget.controller.seekTo(Duration(milliseconds: val.toInt()));
+                                },
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        icon: const Icon(Icons.fullscreen_exit, color: Colors.white),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    return '$minutes:$seconds';
   }
 }

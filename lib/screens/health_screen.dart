@@ -190,8 +190,8 @@ class _HealthScreenState extends State<HealthScreen> with AutomaticKeepAliveClie
   }
 
   Widget _buildResourceCard(String title, IconData icon, Map<String, dynamic> status) {
-    final cpuLoad = status['cpu_load'] as Map<String, dynamic>? ?? {};
-    final load1 = (cpuLoad['1min'] as num?)?.toDouble() ?? 0;
+    final cpuLoad = status['cpu_load'] as List<dynamic>? ?? [];
+    final load1 = cpuLoad.isNotEmpty ? (cpuLoad[0] as num).toDouble() : 0.0;
     final temp = (status['cpu_temp'] as num?)?.toDouble() ?? 0;
     return Card(
       child: Padding(
@@ -218,9 +218,11 @@ class _HealthScreenState extends State<HealthScreen> with AutomaticKeepAliveClie
 
   Widget _buildRamCard() {
     final ram = _status?['ram'] as Map<String, dynamic>? ?? {};
-    final used = (ram['used_gb'] as num?)?.toDouble() ?? 0;
-    final total = (ram['total_gb'] as num?)?.toDouble() ?? 1;
-    final ratio = (used / total).clamp(0.0, 1.0);
+    final totalBytes = (ram['total'] as num?)?.toDouble() ?? 0;
+    final usedBytes = (ram['used'] as num?)?.toDouble() ?? 0;
+    final total = totalBytes / (1024 * 1024 * 1024);
+    final used = usedBytes / (1024 * 1024 * 1024);
+    final ratio = total > 0 ? (used / total).clamp(0.0, 1.0) : 0.0;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -246,10 +248,13 @@ class _HealthScreenState extends State<HealthScreen> with AutomaticKeepAliveClie
 
   Widget _buildDiskCard() {
     final disk = _status?['disk'] as Map<String, dynamic>? ?? {};
-    final usedGb = (disk['used_gb'] as num?)?.toDouble() ?? 0;
-    final totalGb = (disk['total_gb'] as num?)?.toDouble() ?? 1;
-    final freeGb = (disk['free_gb'] as num?)?.toDouble() ?? 0;
-    final ratio = (usedGb / totalGb).clamp(0.0, 1.0);
+    final totalBytes = (disk['total'] as num?)?.toDouble() ?? 0;
+    final usedBytes = (disk['used'] as num?)?.toDouble() ?? 0;
+    final freeBytes = (disk['free'] as num?)?.toDouble() ?? 0;
+    final totalGb = totalBytes / (1024 * 1024 * 1024);
+    final usedGb = usedBytes / (1024 * 1024 * 1024);
+    final freeGb = freeBytes / (1024 * 1024 * 1024);
+    final ratio = totalGb > 0 ? (usedGb / totalGb).clamp(0.0, 1.0) : 0.0;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(14),

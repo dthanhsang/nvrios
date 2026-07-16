@@ -25,6 +25,7 @@ dependencies:
   connectivity_plus: ^6.0.3
   cached_network_image: ^3.3.1
   photo_manager: ^3.2.2
+  google_fonts: ^6.2.1
 
 dev_dependencies:
   flutter_test:

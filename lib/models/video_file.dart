@@ -49,6 +49,6 @@ class VideoFile {
 
   bool get isH264 => codec.toLowerCase() == 'h264';
   bool get isHevc => codec.toLowerCase() == 'hevc' || codec.toLowerCase() == 'h265';
-  bool get needsTranscode => !isH264 || pixFmt.startsWith('yuvj');
-  bool get canPlayDirect => isH264 && !pixFmt.startsWith('yuvj');
+  bool get needsTranscode => !isH264;
+  bool get canPlayDirect => isH264;
 }
