@@ -404,4 +404,15 @@ class ApiService {
     } catch (_) {}
     return null;
   }
+
+  Future<Map<String, dynamic>?> testAi() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/settings/test-ai'),
+        headers: _headers,
+      ).timeout(const Duration(seconds: 25));
+      if (response.statusCode == 200) return jsonDecode(response.body);
+    } catch (_) {}
+    return null;
+  }
 }

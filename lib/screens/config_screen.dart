@@ -16,6 +16,15 @@ class _ConfigScreenState extends State<ConfigScreen> with AutomaticKeepAliveClie
   Map<String, dynamic> _settings = {};
   bool _isLoading = true;
 
+  final _intervalCtrl = TextEditingController();
+  final _cooldownCtrl = TextEditingController();
+  final _geminiKeyCtrl = TextEditingController();
+  final _geminiModelCtrl = TextEditingController();
+  final _aiBaseUrlCtrl = TextEditingController();
+  final _aiApiKeyCtrl = TextEditingController();
+  final _aiModelCtrl = TextEditingController();
+  final _promptCtrl = TextEditingController();
+
   @override
   bool get wantKeepAlive => true;
 
@@ -29,6 +38,14 @@ class _ConfigScreenState extends State<ConfigScreen> with AutomaticKeepAliveClie
   @override
   void dispose() {
     _tabController.dispose();
+    _intervalCtrl.dispose();
+    _cooldownCtrl.dispose();
+    _geminiKeyCtrl.dispose();
+    _geminiModelCtrl.dispose();
+    _aiBaseUrlCtrl.dispose();
+    _aiApiKeyCtrl.dispose();
+    _aiModelCtrl.dispose();
+    _promptCtrl.dispose();
     super.dispose();
   }
 
@@ -40,6 +57,14 @@ class _ConfigScreenState extends State<ConfigScreen> with AutomaticKeepAliveClie
       setState(() {
         _cameras = cameras;
         _settings = settings ?? {};
+        _intervalCtrl.text = _settings['face_detection_interval'] ?? '5';
+        _cooldownCtrl.text = _settings['face_detection_cooldown'] ?? '30';
+        _geminiKeyCtrl.text = _settings['gemini_api_key'] ?? '';
+        _geminiModelCtrl.text = _settings['gemini_model'] ?? 'gemini-flash-latest';
+        _aiBaseUrlCtrl.text = _settings['ai_base_url'] ?? '';
+        _aiApiKeyCtrl.text = _settings['ai_api_key'] ?? '';
+        _aiModelCtrl.text = _settings['ai_model'] ?? 'gemini/gemini-3.1-flash-lite-preview';
+        _promptCtrl.text = _settings['ai_prompt'] ?? '';
         _isLoading = false;
       });
     }
@@ -226,11 +251,6 @@ class _ConfigScreenState extends State<ConfigScreen> with AutomaticKeepAliveClie
   Widget _buildAiTab() {
     final faceEnabled = _settings['face_detection_enabled'] == '1';
     final aiEnabled = _settings['ai_enabled'] == '1';
-    final intervalCtrl = TextEditingController(text: _settings['face_detection_interval'] ?? '5');
-    final cooldownCtrl = TextEditingController(text: _settings['face_detection_cooldown'] ?? '30');
-    final geminiKeyCtrl = TextEditingController(text: _settings['gemini_api_key'] ?? '');
-    final geminiModelCtrl = TextEditingController(text: _settings['gemini_model'] ?? 'gemini-flash-latest');
-    final promptCtrl = TextEditingController(text: _settings['ai_prompt'] ?? '');
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -252,23 +272,33 @@ class _ConfigScreenState extends State<ConfigScreen> with AutomaticKeepAliveClie
                     onChanged: (v) => setState(() => _settings['face_detection_enabled'] = v ? '1' : '0'),
                     contentPadding: EdgeInsets.zero,
                   ),
-                  TextField(controller: intervalCtrl, decoration: const InputDecoration(labelText: 'Khoảng cách quét (giây)'), style: const TextStyle(color: Colors.white), keyboardType: TextInputType.number),
+                  TextField(
+                    controller: _intervalCtrl,
+                    decoration: const InputDecoration(labelText: 'Khoảng cách quét (giây)'),
+                    style: const TextStyle(color: Colors.white),
+                    keyboardType: TextInputType.number,
+                  ),
                   const SizedBox(height: 8),
-                  TextField(controller: cooldownCtrl, decoration: const InputDecoration(labelText: 'Thời gian chờ (giây)'), style: const TextStyle(color: Colors.white), keyboardType: TextInputType.number),
+                  TextField(
+                    controller: _cooldownCtrl,
+                    decoration: const InputDecoration(labelText: 'Thời gian chờ (giây)'),
+                    style: const TextStyle(color: Colors.white),
+                    keyboardType: TextInputType.number,
+                  ),
                 ],
               ),
             ),
           ),
           const SizedBox(height: 12),
 
-          // AI Settings
+          // OpenRouter AI
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Gemini AI', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                  const Text('OpenRouter (9router) - Chính', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 12),
                   SwitchListTile(
                     title: const Text('Bật AI', style: TextStyle(color: Colors.white)),
@@ -276,49 +306,146 @@ class _ConfigScreenState extends State<ConfigScreen> with AutomaticKeepAliveClie
                     onChanged: (v) => setState(() => _settings['ai_enabled'] = v ? '1' : '0'),
                     contentPadding: EdgeInsets.zero,
                   ),
-                  TextField(controller: geminiKeyCtrl, decoration: const InputDecoration(labelText: 'API Key'), style: const TextStyle(color: Colors.white), obscureText: true),
+                  TextField(
+                    controller: _aiBaseUrlCtrl,
+                    decoration: const InputDecoration(labelText: 'Base URL', hintText: 'https://openrouter.ai/api/v1'),
+                    style: const TextStyle(color: Colors.white),
+                  ),
                   const SizedBox(height: 8),
-                  TextField(controller: geminiModelCtrl, decoration: const InputDecoration(labelText: 'Model'), style: const TextStyle(color: Colors.white)),
+                  TextField(
+                    controller: _aiApiKeyCtrl,
+                    decoration: const InputDecoration(labelText: 'API Key'),
+                    style: const TextStyle(color: Colors.white),
+                    obscureText: true,
+                  ),
                   const SizedBox(height: 8),
-                  TextField(controller: promptCtrl, decoration: const InputDecoration(labelText: 'AI Prompt'), style: const TextStyle(color: Colors.white), maxLines: 5),
+                  TextField(
+                    controller: _aiModelCtrl,
+                    decoration: const InputDecoration(labelText: 'Model', hintText: 'gemini/gemini-3.1-flash-lite-preview'),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Gemini Backup
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Google Gemini (Dự phòng)', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _geminiKeyCtrl,
+                    decoration: const InputDecoration(labelText: 'API Key (Dự phòng)'),
+                    style: const TextStyle(color: Colors.white),
+                    obscureText: true,
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _geminiModelCtrl,
+                    decoration: const InputDecoration(labelText: 'Model (Dự phòng)', hintText: 'gemini-flash-latest'),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // AI Prompt
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('AI Prompt phân tích hình ảnh', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _promptCtrl,
+                    decoration: const InputDecoration(labelText: 'AI Prompt'),
+                    style: const TextStyle(color: Colors.white),
+                    maxLines: 6,
+                  ),
                 ],
               ),
             ),
           ),
           const SizedBox(height: 16),
 
-          // Buttons
-          Row(
+          // Action Buttons
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () async {
-                    // Save first, then test
-                    await _saveAiSettings(intervalCtrl, cooldownCtrl, geminiKeyCtrl, geminiModelCtrl, promptCtrl);
-                    final result = await _apiService.testGemini();
-                    if (mounted) {
-                      showDialog(
-                        context: context,
-                        builder: (ctx) => AlertDialog(
-                          backgroundColor: const Color(0xFF1E2330),
-                          title: Text(result?['status'] == 'ok' ? '✅ Thành công' : '❌ Lỗi', style: const TextStyle(color: Colors.white)),
-                          content: Text(result?['message'] ?? 'Không thể kết nối', style: const TextStyle(color: Colors.grey)),
-                          actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
-                        ),
-                      );
-                    }
-                  },
-                  icon: const Icon(Icons.wifi_tethering, size: 18),
-                  label: const Text('Test Gemini'),
-                  style: OutlinedButton.styleFrom(foregroundColor: Colors.orange, side: const BorderSide(color: Colors.orange)),
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        await _saveAiSettings();
+                        final result = await _apiService.testAi();
+                        if (mounted) {
+                          showDialog(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              backgroundColor: const Color(0xFF1E2330),
+                              title: Text(result?['status'] == 'success' ? '✅ Thành công (OpenRouter)' : '❌ Lỗi (OpenRouter)', style: const TextStyle(color: Colors.white)),
+                              content: Text(result?['message'] ?? 'Không thể kết nối hoặc lỗi cấu hình', style: const TextStyle(color: Colors.grey)),
+                              actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+                            ),
+                          );
+                        }
+                      },
+                      icon: const Icon(Icons.rocket_launch, size: 16),
+                      label: const Text('Test OpenRouter', style: TextStyle(fontSize: 12)),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.teal,
+                        side: const BorderSide(color: Colors.teal),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        await _saveAiSettings();
+                        final result = await _apiService.testGemini();
+                        if (mounted) {
+                          showDialog(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              backgroundColor: const Color(0xFF1E2330),
+                              title: Text(result?['status'] == 'ok' ? '✅ Thành công (Gemini)' : '❌ Lỗi (Gemini)', style: const TextStyle(color: Colors.white)),
+                              content: Text(result?['message'] ?? 'Không thể kết nối hoặc lỗi cấu hình', style: const TextStyle(color: Colors.grey)),
+                              actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+                            ),
+                          );
+                        }
+                      },
+                      icon: const Icon(Icons.psychology, size: 16),
+                      label: const Text('Test Gemini', style: TextStyle(fontSize: 12)),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.orange,
+                        side: const BorderSide(color: Colors.orange),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: () => _saveAiSettings(intervalCtrl, cooldownCtrl, geminiKeyCtrl, geminiModelCtrl, promptCtrl),
-                  icon: const Icon(Icons.save, size: 18),
-                  label: const Text('Lưu'),
+              const SizedBox(height: 10),
+              ElevatedButton.icon(
+                onPressed: _saveAiSettings,
+                icon: const Icon(Icons.save, size: 18),
+                label: const Text('Lưu cấu hình'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
               ),
             ],
@@ -328,19 +455,19 @@ class _ConfigScreenState extends State<ConfigScreen> with AutomaticKeepAliveClie
     );
   }
 
-  Future<void> _saveAiSettings(
-    TextEditingController interval, TextEditingController cooldown,
-    TextEditingController key, TextEditingController model, TextEditingController prompt,
-  ) async {
-    _settings['face_detection_interval'] = interval.text;
-    _settings['face_detection_cooldown'] = cooldown.text;
-    _settings['gemini_api_key'] = key.text;
-    _settings['gemini_model'] = model.text;
-    _settings['ai_prompt'] = prompt.text;
+  Future<void> _saveAiSettings() async {
+    _settings['face_detection_interval'] = _intervalCtrl.text;
+    _settings['face_detection_cooldown'] = _cooldownCtrl.text;
+    _settings['ai_base_url'] = _aiBaseUrlCtrl.text;
+    _settings['ai_api_key'] = _aiApiKeyCtrl.text;
+    _settings['ai_model'] = _aiModelCtrl.text;
+    _settings['gemini_api_key'] = _geminiKeyCtrl.text;
+    _settings['gemini_model'] = _geminiModelCtrl.text;
+    _settings['ai_prompt'] = _promptCtrl.text;
     final ok = await _apiService.updateSettings(_settings);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(ok ? 'Đã lưu cấu hình' : 'Lỗi khi lưu')),
+        SnackBar(content: Text(ok ? 'Đã lưu cấu hình AI' : 'Lỗi khi lưu cấu hình AI')),
       );
     }
   }

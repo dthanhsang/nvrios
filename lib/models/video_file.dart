@@ -49,6 +49,19 @@ class VideoFile {
 
   bool get isH264 => codec.toLowerCase() == 'h264' || codec.toLowerCase() == 'avc';
   bool get isHevc => codec.toLowerCase() == 'hevc' || codec.toLowerCase() == 'h265';
-  bool get needsTranscode => !isH264 && !isHevc;
-  bool get canPlayDirect => isH264 || isHevc;
+  
+  // Bắt buộc đi qua luồng stream api đối với camera Yoosee (Cam 3) để bỏ audio lỗi
+  bool get needsTranscode {
+    if (directUrl.contains('/recordings/3/')) {
+      return true;
+    }
+    return !isH264 && !isHevc;
+  }
+
+  bool get canPlayDirect {
+    if (directUrl.contains('/recordings/3/')) {
+      return false;
+    }
+    return isH264 || isHevc;
+  }
 }
