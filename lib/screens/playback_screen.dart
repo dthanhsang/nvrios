@@ -36,6 +36,9 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
   // Video Player state
   VideoPlayerController? _videoPlayerController;
   bool _isPlayerInitialized = false;
+  double _playbackLoadingPercent = 0.0;
+  double _videoBufferPercent = 0.0;
+  Timer? _playbackLoadingTimer;
 
   // New state
   double _playbackSpeed = 1.0;
@@ -61,6 +64,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
   }
 
   void _disposeVideoPlayer() {
+    _playbackLoadingTimer?.cancel();
     _videoPlayerController?.removeListener(_videoPlayerListener);
     _videoPlayerController?.dispose();
     _videoPlayerController = null;
@@ -76,6 +80,22 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
         setState(() {
           _currentPlaySeconds = (_currentVideo?.startSeconds.toDouble() ?? 0) + value.position.inSeconds;
         });
+      }
+    }
+
+    if (value.isInitialized) {
+      final totalMs = value.duration.inMilliseconds;
+      if (totalMs > 0) {
+        int totalBufferedMs = 0;
+        for (final range in value.buffered) {
+          totalBufferedMs += (range.end.inMilliseconds - range.start.inMilliseconds);
+        }
+        final double percent = (totalBufferedMs / totalMs) * 100.0;
+        if (mounted && percent != _videoBufferPercent) {
+          setState(() {
+            _videoBufferPercent = percent.clamp(0.0, 100.0);
+          });
+        }
       }
     }
 
@@ -163,6 +183,19 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
       });
     }
 
+    _playbackLoadingTimer?.cancel();
+    _playbackLoadingPercent = 0.0;
+    _videoBufferPercent = 0.0;
+    _playbackLoadingTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+      if (mounted) {
+        setState(() {
+          if (_playbackLoadingPercent < 95.0) {
+            _playbackLoadingPercent += 5.0;
+          }
+        });
+      }
+    });
+
     try {
       final controller = VideoPlayerController.networkUrl(
         Uri.parse(videoUrl),
@@ -172,6 +205,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
       _videoPlayerController = controller;
       await controller.initialize();
       
+      _playbackLoadingTimer?.cancel();
       if (!mounted) return;
 
       controller.addListener(_videoPlayerListener);
@@ -184,9 +218,11 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
       await controller.play();
 
       setState(() {
+        _playbackLoadingPercent = 100.0;
         _isPlayerInitialized = true;
       });
     } catch (e) {
+      _playbackLoadingTimer?.cancel();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -702,13 +738,16 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
     }
 
     if (_videoPlayerController == null || !_isPlayerInitialized) {
-      return const Center(
+      return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CircularProgressIndicator(color: Color(0xFFFF3B30)),
-            SizedBox(height: 12),
-            Text('Đang tải luồng video...', style: TextStyle(color: Colors.grey, fontSize: 13)),
+            const CircularProgressIndicator(color: Color(0xFFFF3B30)),
+            const SizedBox(height: 12),
+            Text(
+              'Đang tải luồng video... ${_playbackLoadingPercent.toInt()}%',
+              style: const TextStyle(color: Colors.grey, fontSize: 13),
+            ),
           ],
         ),
       );
@@ -737,7 +776,23 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
             ),
           ),
         ),
-        if (!_videoPlayerController!.value.isPlaying)
+        if (_videoPlayerController!.value.isBuffering)
+          Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(color: Color(0xFFFF3B30)),
+                const SizedBox(height: 12),
+                Text(
+                  'Đang tải thêm... ${_videoBufferPercent.toInt()}%',
+                  style: const TextStyle(color: Colors.white, fontSize: 13, shadows: [
+                    Shadow(offset: Offset(1, 1), blurRadius: 4, color: Colors.black),
+                  ]),
+                ),
+              ],
+            ),
+          )
+        else if (!_videoPlayerController!.value.isPlaying)
           IgnorePointer(
             child: Container(
               padding: const EdgeInsets.all(12),
