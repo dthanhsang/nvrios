@@ -366,6 +366,30 @@ class ApiService {
     }
   }
 
+  Future<Map<String, dynamic>?> runDiskBenchmark() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/system/disk-benchmark'),
+        headers: _headers,
+      ).timeout(const Duration(seconds: 30));
+      _handle401(response.statusCode);
+      if (response.statusCode == 200) return jsonDecode(response.body);
+    } catch (_) {}
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> formatStorage() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/system/format-storage'),
+        headers: _headers,
+      ).timeout(const Duration(seconds: 30));
+      _handle401(response.statusCode);
+      if (response.statusCode == 200) return jsonDecode(response.body);
+    } catch (_) {}
+    return null;
+  }
+
   // ==================== SETTINGS ====================
 
   Future<Map<String, dynamic>?> getSettings() async {

@@ -267,27 +267,187 @@ class _HealthScreenState extends State<HealthScreen> with AutomaticKeepAliveClie
     final usedGb = usedBytes / (1024 * 1024 * 1024);
     final freeGb = freeBytes / (1024 * 1024 * 1024);
     final ratio = totalGb > 0 ? (usedGb / totalGb).clamp(0.0, 1.0) : 0.0;
+
+    // SMART health info
+    final dh = _status?['disk_health'] as Map<String, dynamic>? ?? {};
+    final smartStatus = dh['status'] as String? ?? 'UNKNOWN';
+    final model = dh['model'] as String? ?? '-';
+    final powerHours = (dh['power_on_hours'] as num?)?.toInt() ?? 0;
+    final diskTemp = (dh['temperature_celsius'] as num?)?.toInt() ?? 0;
+    final reallocated = (dh['reallocated_sectors'] as num?)?.toInt() ?? 0;
+    final pending = (dh['pending_sectors'] as num?)?.toInt() ?? 0;
+
+    Color smartColor;
+    IconData smartIcon;
+    switch (smartStatus) {
+      case 'PASSED': smartColor = Colors.green; smartIcon = Icons.check_circle; break;
+      case 'WARNING': smartColor = Colors.orange; smartIcon = Icons.warning; break;
+      case 'FAILED': smartColor = Colors.red; smartIcon = Icons.error; break;
+      default: smartColor = Colors.grey; smartIcon = Icons.help_outline; break;
+    }
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Usage bar
             Row(
               children: [
                 Icon(Icons.storage, color: _usageColor(ratio), size: 28),
                 const SizedBox(width: 14),
-                const Text('Disk', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                const Text('Ổ cứng', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                 const Spacer(),
-                Text('${usedGb.toStringAsFixed(1)} / ${totalGb.toStringAsFixed(1)} GB (Free: ${freeGb.toStringAsFixed(1)} GB)', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                Text('${usedGb.toStringAsFixed(1)} / ${totalGb.toStringAsFixed(1)} GB (Trống: ${freeGb.toStringAsFixed(1)} GB)', style: const TextStyle(color: Colors.grey, fontSize: 12)),
               ],
             ),
             const SizedBox(height: 8),
             LinearProgressIndicator(value: ratio, backgroundColor: Colors.grey[800], valueColor: AlwaysStoppedAnimation(_usageColor(ratio))),
+            const Divider(color: Colors.grey, height: 20),
+
+            // SMART health section
+            Row(
+              children: [
+                Icon(smartIcon, color: smartColor, size: 20),
+                const SizedBox(width: 8),
+                Text('SMART: $smartStatus', style: TextStyle(color: smartColor, fontWeight: FontWeight.bold, fontSize: 13)),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text('Model: $model', style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            const SizedBox(height: 2),
+            Text('Nhiệt độ: $diskTemp°C • Giờ hoạt động: $powerHours h', style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            const SizedBox(height: 2),
+            Text('Bad Sectors: $reallocated • Pending: $pending', style: TextStyle(color: (reallocated > 0 || pending > 0) ? Colors.orange : Colors.white70, fontSize: 12)),
+
+            const SizedBox(height: 10),
+            // Benchmark & Format buttons
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _runBenchmark,
+                    icon: const Icon(Icons.speed, size: 16),
+                    label: const Text('Benchmark', style: TextStyle(fontSize: 12)),
+                    style: OutlinedButton.styleFrom(foregroundColor: Colors.cyan, side: const BorderSide(color: Colors.cyan)),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _confirmFormatStorage,
+                    icon: const Icon(Icons.delete_forever, size: 16),
+                    label: const Text('Format', style: TextStyle(fontSize: 12)),
+                    style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFFFF3B30), side: const BorderSide(color: Color(0xFFFF3B30))),
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
     );
+  }
+
+  void _runBenchmark() async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const AlertDialog(
+        backgroundColor: Color(0xFF1E2330),
+        content: Row(
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(width: 16),
+            Text('Đang đo tốc độ đọc/ghi...', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+      ),
+    );
+    final result = await _apiService.runDiskBenchmark();
+    if (!mounted) return;
+    Navigator.pop(context);
+    if (result != null && result['status'] == 'success') {
+      final write = result['write_speed_mbs'];
+      final read = result['read_speed_mbs'];
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF1E2330),
+          title: const Text('Kết quả Benchmark', style: TextStyle(color: Colors.white)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _benchmarkRow(Icons.arrow_downward, 'Ghi (Write)', '$write MB/s', Colors.orange),
+              const SizedBox(height: 8),
+              _benchmarkRow(Icons.arrow_upward, 'Đọc (Read)', '$read MB/s', Colors.green),
+            ],
+          ),
+          actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Benchmark thất bại!')));
+    }
+  }
+
+  Widget _benchmarkRow(IconData icon, String label, String value, Color color) {
+    return Row(
+      children: [
+        Icon(icon, color: color, size: 22),
+        const SizedBox(width: 10),
+        Text(label, style: const TextStyle(color: Colors.white70, fontSize: 14)),
+        const Spacer(),
+        Text(value, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16)),
+      ],
+    );
+  }
+
+  void _confirmFormatStorage() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E2330),
+        title: const Text('⚠️ Format ổ cứng?', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Tất cả video đã ghi và sự kiện sẽ bị xóa vĩnh viễn.\n\nCấu hình camera và tài khoản sẽ được giữ nguyên.\n\nBạn chắc chắn muốn tiếp tục?',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('XÓA TẤT CẢ', style: TextStyle(color: Color(0xFFFF3B30), fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const AlertDialog(
+        backgroundColor: Color(0xFF1E2330),
+        content: Row(
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(width: 16),
+            Text('Đang format...', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+      ),
+    );
+    final result = await _apiService.formatStorage();
+    if (!mounted) return;
+    Navigator.pop(context);
+    if (result != null && result['status'] == 'success') {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ Format thành công!')));
+      _loadData();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('❌ Format thất bại!')));
+    }
   }
 
   Widget _buildNetworkCard() {

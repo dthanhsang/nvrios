@@ -41,6 +41,9 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
   /// Currently selected cell index (for camera assignment)
   int? _selectedCellIndex;
 
+  int _currentPageIndex = 0;
+  final PageController _pageController = PageController();
+
   @override
   bool get wantKeepAlive => true;
 
@@ -51,51 +54,68 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
     _loadCameras();
   }
 
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
   /// Initialize cells for the current grid size.
   void _initCells() {
-    final count = _gridSize * _gridSize;
-    _cells = List.generate(count, (_) => _GridCell());
+    if (_gridSize == 1) {
+      _cells = [_GridCell(isHd: true)];
+    } else {
+      final count = _gridSize * _gridSize;
+      _cells = List.generate(count, (_) => _GridCell());
+    }
   }
 
   /// Change grid size, preserving existing camera assignments where possible.
   void _setGridSize(int size) {
     if (size == _gridSize) return;
-    final oldCells = _cells;
     _gridSize = size;
-    final newCount = size * size;
-
-    // Auto-quality: 1x1 = HD, multi = SD
-    final autoHd = size == 1;
-
-    _cells = List.generate(newCount, (i) {
-      if (i < oldCells.length) {
-        // Preserve existing assignment but update quality
-        return _GridCell(camera: oldCells[i].camera, isHd: autoHd);
-      }
-      return _GridCell(isHd: autoHd);
-    });
-
-    // If we shrunk, disconnect streams in removed cells (they'll be GC'd)
     _selectedCellIndex = null;
-    setState(() {});
-
-    // Auto-assign cameras to empty cells if cameras are loaded
-    if (_cameras.isNotEmpty) {
-      _autoAssignCameras();
+    _currentPageIndex = 0;
+    if (_pageController.hasClients) {
+      _pageController.jumpToPage(0);
     }
+
+    if (_gridSize == 1) {
+      if (_cameras.isEmpty) {
+        _cells = [_GridCell(isHd: true)];
+      } else {
+        _cells = List.generate(_cameras.length, (i) => _GridCell(camera: _cameras[i], isHd: true));
+      }
+    } else {
+      final newCount = size * size;
+      _cells = List.generate(newCount, (i) {
+        final cam = (i < _cameras.length) ? _cameras[i] : null;
+        return _GridCell(camera: cam, isHd: false);
+      });
+    }
+
+    setState(() {});
   }
 
   /// Auto-assign cameras to empty grid cells.
   void _autoAssignCameras() {
     final autoHd = _gridSize == 1;
-    int cameraIdx = 0;
-    for (int i = 0; i < _cells.length && cameraIdx < _cameras.length; i++) {
-      if (_cells[i].camera == null) {
-        _cells[i] = _GridCell(camera: _cameras[cameraIdx], isHd: autoHd);
-        cameraIdx++;
+    if (_gridSize == 1) {
+      if (_cameras.isEmpty) {
+        _cells = [_GridCell(isHd: true)];
       } else {
-        // Skip cameras already assigned
-        cameraIdx++;
+        _cells = List.generate(_cameras.length, (i) => _GridCell(camera: _cameras[i], isHd: true));
+      }
+    } else {
+      int cameraIdx = 0;
+      for (int i = 0; i < _cells.length && cameraIdx < _cameras.length; i++) {
+        if (_cells[i].camera == null) {
+          _cells[i] = _GridCell(camera: _cameras[cameraIdx], isHd: autoHd);
+          cameraIdx++;
+        } else {
+          // Skip cameras already assigned
+          cameraIdx++;
+        }
       }
     }
     setState(() {});
@@ -266,6 +286,53 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
   }
 
   Widget _buildGrid() {
+    if (_gridSize == 1) {
+      return Column(
+        children: [
+          Expanded(
+            child: PageView.builder(
+              controller: _pageController,
+              itemCount: _cells.length,
+              onPageChanged: (index) {
+                setState(() {
+                  _currentPageIndex = index;
+                });
+              },
+              itemBuilder: (context, index) {
+                return Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: AspectRatio(
+                    aspectRatio: 16 / 10,
+                    child: _buildGridCell(index),
+                  ),
+                );
+              },
+            ),
+          ),
+          if (_cells.length > 1)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(_cells.length, (index) {
+                  return Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _currentPageIndex == index
+                          ? const Color(0xFFFF3B30)
+                          : Colors.grey.withOpacity(0.5),
+                    ),
+                  );
+                }),
+              ),
+            ),
+        ],
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.all(4),
       child: GridView.builder(
