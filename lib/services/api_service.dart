@@ -15,10 +15,12 @@ class ApiService {
 
   String _baseUrl = '';
   String _sessionToken = '';
+  String _userRole = 'viewer';
   LogoutCallback? _onSessionExpired;
 
   String get baseUrl => _baseUrl;
   String get sessionToken => _sessionToken;
+  String get userRole => _userRole;
   String get go2rtcUrl => '$_baseUrl/go2rtc';
   bool get isAuthenticated => _sessionToken.isNotEmpty;
 
@@ -47,6 +49,7 @@ class ApiService {
     final prefs = await SharedPreferences.getInstance();
     _baseUrl = prefs.getString('baseUrl') ?? '';
     _sessionToken = prefs.getString('sessionToken') ?? '';
+    _userRole = prefs.getString('userRole') ?? 'viewer';
   }
 
   void setBaseUrl(String url) {
@@ -57,16 +60,19 @@ class ApiService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('baseUrl', _baseUrl);
     await prefs.setString('sessionToken', _sessionToken);
+    await prefs.setString('userRole', _userRole);
   }
 
   Future<void> _clearCredentials() async {
     _sessionToken = '';
+    _userRole = 'viewer';
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('sessionToken');
+    await prefs.remove('userRole');
   }
 
   void _handle401(int statusCode) {
-    if (statusCode == 401 || statusCode == 403) {
+    if (statusCode == 401) {
       _clearCredentials();
       _onSessionExpired?.call();
     }
@@ -86,6 +92,7 @@ class ApiService {
         final data = jsonDecode(response.body);
         if (data['success'] == true && data['token'] != null) {
           _sessionToken = data['token'];
+          _userRole = data['role'] ?? 'viewer';
           await _saveCredentials();
           return true;
         }
@@ -102,7 +109,12 @@ class ApiService {
       for (final cookie in cookies) {
         if (cookie.name == 'dvr_session') {
           _sessionToken = cookie.value;
+          _userRole = 'viewer'; // Default to viewer for legacy cookie logins, then profile API will update it
           await _saveCredentials();
+          
+          // Try to fetch profile to get actual role
+          await getUserProfile();
+          
           client.close();
           return true;
         }
@@ -121,13 +133,28 @@ class ApiService {
     await _clearCredentials();
   }
 
-  Future<bool> isSessionValid() async {
+  Future<Map<String, dynamic>?> getUserProfile() async {
     try {
       final response = await http.get(
-        Uri.parse('$_baseUrl/api/cameras'),
+        Uri.parse('$_baseUrl/api/user/profile'),
         headers: authHeaders,
-      ).timeout(const Duration(seconds: 5));
-      return response.statusCode == 200;
+      );
+      _handle401(response.statusCode);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        _userRole = data['role'] ?? 'viewer';
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('userRole', _userRole);
+        return data;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<bool> isSessionValid() async {
+    try {
+      final profile = await getUserProfile();
+      return profile != null;
     } catch (_) {
       return false;
     }

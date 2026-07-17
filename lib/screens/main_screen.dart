@@ -19,18 +19,59 @@ class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
   DateTime? _lastLiveTap;
 
-  final List<Widget> _screens = const [
-    LiveScreen(),
-    PlaybackScreen(),
-    EventsScreen(),
-    ConfigScreen(),
-    HealthScreen(),
-  ];
+  bool get _isAdmin => _apiService.userRole == 'admin';
+
+  List<Widget> get _allowedScreens {
+    if (_isAdmin) {
+      return const [
+        LiveScreen(),
+        PlaybackScreen(),
+        EventsScreen(),
+        ConfigScreen(),
+        HealthScreen(),
+      ];
+    } else {
+      return const [
+        LiveScreen(),
+        PlaybackScreen(),
+        EventsScreen(),
+      ];
+    }
+  }
+
+  List<BottomNavigationBarItem> get _allowedNavItems {
+    if (_isAdmin) {
+      return const [
+        BottomNavigationBarItem(icon: Icon(Icons.videocam), label: 'Trực tiếp'),
+        BottomNavigationBarItem(icon: Icon(Icons.replay), label: 'Xem lại'),
+        BottomNavigationBarItem(icon: Icon(Icons.face), label: 'Sự kiện'),
+        BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Cấu hình'),
+        BottomNavigationBarItem(icon: Icon(Icons.monitor_heart), label: 'Hệ thống'),
+      ];
+    } else {
+      return const [
+        BottomNavigationBarItem(icon: Icon(Icons.videocam), label: 'Trực tiếp'),
+        BottomNavigationBarItem(icon: Icon(Icons.replay), label: 'Xem lại'),
+        BottomNavigationBarItem(icon: Icon(Icons.face), label: 'Sự kiện'),
+      ];
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     _apiService.setOnSessionExpired(_handleSessionExpired);
+    _checkProfile();
+  }
+
+  Future<void> _checkProfile() async {
+    // Fetch profile to ensure the local userRole is always sync'd with the backend status
+    if (_apiService.isAuthenticated) {
+      await _apiService.getUserProfile();
+      if (mounted) {
+        setState(() {});
+      }
+    }
   }
 
   void _handleSessionExpired() {
@@ -124,22 +165,20 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final screens = _allowedScreens;
+    final navItems = _allowedNavItems;
+    final safeIndex = _currentIndex.clamp(0, screens.length - 1);
+
     return Scaffold(
       body: IndexedStack(
-        index: _currentIndex,
-        children: _screens,
+        index: safeIndex,
+        children: screens,
       ),
       bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
+        currentIndex: safeIndex,
         onTap: _onTabTapped,
         type: BottomNavigationBarType.fixed,
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.videocam), label: 'Trực tiếp'),
-          BottomNavigationBarItem(icon: Icon(Icons.replay), label: 'Xem lại'),
-          BottomNavigationBarItem(icon: Icon(Icons.face), label: 'Sự kiện'),
-          BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Cấu hình'),
-          BottomNavigationBarItem(icon: Icon(Icons.monitor_heart), label: 'Hệ thống'),
-        ],
+        items: navItems,
       ),
     );
   }
