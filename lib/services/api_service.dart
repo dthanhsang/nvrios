@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -14,14 +15,18 @@ class ApiService {
   ApiService._internal();
 
   String _baseUrl = '';
+  String _localUrl = '';
+  String _activeUrl = '';
   String _sessionToken = '';
   String _userRole = 'viewer';
   LogoutCallback? _onSessionExpired;
 
-  String get baseUrl => _baseUrl;
+  String get baseUrl => _activeUrl.isNotEmpty ? _activeUrl : _baseUrl;
+  String get rawBaseUrl => _baseUrl;
+  String get localUrl => _localUrl;
   String get sessionToken => _sessionToken;
   String get userRole => _userRole;
-  String get go2rtcUrl => '$_baseUrl/go2rtc';
+  String get go2rtcUrl => '$baseUrl/go2rtc';
   bool get isAuthenticated => _sessionToken.isNotEmpty;
 
   void setOnSessionExpired(LogoutCallback callback) {
@@ -48,17 +53,47 @@ class ApiService {
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
     _baseUrl = prefs.getString('baseUrl') ?? '';
+    _localUrl = prefs.getString('localUrl') ?? '';
     _sessionToken = prefs.getString('sessionToken') ?? '';
     _userRole = prefs.getString('userRole') ?? 'viewer';
+    await detectActiveUrl();
+  }
+
+  Future<void> detectActiveUrl() async {
+    if (_localUrl.isEmpty) {
+      _activeUrl = _baseUrl;
+      return;
+    }
+    try {
+      final response = await http.get(
+        Uri.parse('$_localUrl/api/cameras'),
+        headers: {'Bypass-Tunnel-Reminder': 'true'},
+      ).timeout(const Duration(milliseconds: 1200));
+      
+      if (response.statusCode == 200 || response.statusCode == 401 || response.statusCode == 403) {
+        _activeUrl = _localUrl;
+        developer.log("Smart Fallback: Using Local IP/URL: $_activeUrl");
+        return;
+      }
+    } catch (_) {}
+    
+    _activeUrl = _baseUrl;
+    developer.log("Smart Fallback: Using Public URL: $_activeUrl");
   }
 
   void setBaseUrl(String url) {
     _baseUrl = url.replaceAll(RegExp(r'/+$'), '');
+    _activeUrl = _baseUrl;
+  }
+
+  void setLocalUrl(String url) {
+    _localUrl = url.replaceAll(RegExp(r'/+$'), '');
   }
 
   Future<void> _saveCredentials() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('baseUrl', _baseUrl);
+    await prefs.setString('baseUrl', baseUrl);
+    await prefs.setString('localUrl', _localUrl);
     await prefs.setString('sessionToken', _sessionToken);
     await prefs.setString('userRole', _userRole);
   }
@@ -84,7 +119,7 @@ class ApiService {
     try {
       // Try JSON API login first
       final response = await http.post(
-        Uri.parse('$_baseUrl/api/login'),
+        Uri.parse('$baseUrl/api/login'),
         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
         body: 'username=${Uri.encodeComponent(username)}&password=${Uri.encodeComponent(password)}',
       );
@@ -100,7 +135,7 @@ class ApiService {
 
       // Fallback: use dart:io HttpClient for redirect-based login
       final client = HttpClient()..badCertificateCallback = (cert, host, port) => true;
-      final req = await client.postUrl(Uri.parse('$_baseUrl/login'));
+      final req = await client.postUrl(Uri.parse('$baseUrl/login'));
       req.followRedirects = false;
       req.headers.contentType = ContentType('application', 'x-www-form-urlencoded');
       req.write('username=${Uri.encodeComponent(username)}&password=${Uri.encodeComponent(password)}');
@@ -128,7 +163,7 @@ class ApiService {
 
   Future<void> logout() async {
     try {
-      await http.get(Uri.parse('$_baseUrl/logout'), headers: authHeaders);
+      await http.get(Uri.parse('$baseUrl/logout'), headers: authHeaders);
     } catch (_) {}
     await _clearCredentials();
   }
@@ -136,7 +171,7 @@ class ApiService {
   Future<Map<String, dynamic>?> getUserProfile() async {
     try {
       final response = await http.get(
-        Uri.parse('$_baseUrl/api/user/profile'),
+        Uri.parse('$baseUrl/api/user/profile'),
         headers: authHeaders,
       );
       _handle401(response.statusCode);
@@ -165,7 +200,7 @@ class ApiService {
   Future<List<Camera>> getCameras() async {
     try {
       final response = await http.get(
-        Uri.parse('$_baseUrl/api/cameras'),
+        Uri.parse('$baseUrl/api/cameras'),
         headers: authHeaders,
       );
       _handle401(response.statusCode);
@@ -180,7 +215,7 @@ class ApiService {
   Future<bool> addCamera(Map<String, String> data) async {
     try {
       final response = await http.post(
-        Uri.parse('$_baseUrl/api/cameras'),
+        Uri.parse('$baseUrl/api/cameras'),
         headers: _headers,
         body: data.entries.map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}').join('&'),
       );
@@ -194,7 +229,7 @@ class ApiService {
   Future<bool> updateCamera(int camId, Map<String, String> data) async {
     try {
       final response = await http.post(
-        Uri.parse('$_baseUrl/api/cameras/$camId/update'),
+        Uri.parse('$baseUrl/api/cameras/$camId/update'),
         headers: _headers,
         body: data.entries.map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}').join('&'),
       );
@@ -208,7 +243,7 @@ class ApiService {
   Future<bool> deleteCamera(int camId) async {
     try {
       final response = await http.post(
-        Uri.parse('$_baseUrl/api/cameras/$camId/delete'),
+        Uri.parse('$baseUrl/api/cameras/$camId/delete'),
         headers: _headers,
       );
       _handle401(response.statusCode);
@@ -223,7 +258,7 @@ class ApiService {
   Future<List<String>> getPlaybackDates(int camId) async {
     try {
       final response = await http.get(
-        Uri.parse('$_baseUrl/api/playback/dates/$camId'),
+        Uri.parse('$baseUrl/api/playback/dates/$camId'),
         headers: authHeaders,
       );
       _handle401(response.statusCode);
@@ -238,7 +273,7 @@ class ApiService {
   Future<List<VideoFile>> getPlaybackVideos(int camId, String date) async {
     try {
       final response = await http.get(
-        Uri.parse('$_baseUrl/api/playback/videos/$camId/$date'),
+        Uri.parse('$baseUrl/api/playback/videos/$camId/$date'),
         headers: authHeaders,
       );
       _handle401(response.statusCode);
@@ -253,7 +288,7 @@ class ApiService {
   Future<List<Map<String, dynamic>>> getPlaybackEvents(int camId, String date) async {
     try {
       final response = await http.get(
-        Uri.parse('$_baseUrl/api/playback/events/$camId/$date'),
+        Uri.parse('$baseUrl/api/playback/events/$camId/$date'),
         headers: authHeaders,
       );
       _handle401(response.statusCode);
@@ -269,7 +304,7 @@ class ApiService {
   Future<Map<String, dynamic>?> checkPlaybackCache(int camId, String date, String filename) async {
     try {
       final response = await http.get(
-        Uri.parse('$_baseUrl/api/playback/cache-status/$camId/$date/$filename'),
+        Uri.parse('$baseUrl/api/playback/cache-status/$camId/$date/$filename'),
         headers: authHeaders,
       );
       _handle401(response.statusCode);
@@ -281,15 +316,15 @@ class ApiService {
   }
 
   String getPlayerUrl(String videoUrl, {int seekSeconds = 0}) {
-    return '$_baseUrl/api/playback/player?video_url=${Uri.encodeComponent(videoUrl)}&seek_seconds=$seekSeconds&token=$_sessionToken';
+    return '$baseUrl/api/playback/player?video_url=${Uri.encodeComponent(videoUrl)}&seek_seconds=$seekSeconds&token=$_sessionToken';
   }
 
   String getStreamUrl(int camId, String date, String filename, {int seekSeconds = 0}) {
-    return '$_baseUrl/api/playback/stream/$camId/$date/$filename?ss=$seekSeconds&token=$_sessionToken';
+    return '$baseUrl/api/playback/stream/$camId/$date/$filename?ss=$seekSeconds&token=$_sessionToken';
   }
 
   String getDirectUrl(int camId, String date, String filename) {
-    return '$_baseUrl/recordings/$camId/$date/$filename';
+    return '$baseUrl/recordings/$camId/$date/$filename';
   }
 
   // ==================== LIVE STREAMING ====================
@@ -314,7 +349,7 @@ class ApiService {
 
   Future<List<FaceEvent>> getFaceEvents({int limit = 50, int? cameraId}) async {
     try {
-      String url = '$_baseUrl/api/faces/recent?limit=$limit';
+      String url = '$baseUrl/api/faces/recent?limit=$limit';
       if (cameraId != null) url += '&camera_id=$cameraId';
       final response = await http.get(Uri.parse(url), headers: authHeaders);
       _handle401(response.statusCode);
@@ -328,7 +363,7 @@ class ApiService {
         } else {
           items = [];
         }
-        return items.map((j) => FaceEvent.fromJson(j, _baseUrl)).toList();
+        return items.map((j) => FaceEvent.fromJson(j, baseUrl)).toList();
       }
     } catch (_) {}
     return [];
@@ -339,7 +374,7 @@ class ApiService {
   Future<Map<String, dynamic>?> getSystemStatus() async {
     try {
       final response = await http.get(
-        Uri.parse('$_baseUrl/api/system/status'),
+        Uri.parse('$baseUrl/api/system/status'),
         headers: authHeaders,
       );
       _handle401(response.statusCode);
@@ -351,7 +386,7 @@ class ApiService {
   Future<String> getSystemLogs({int limit = 250}) async {
     try {
       final response = await http.get(
-        Uri.parse('$_baseUrl/api/system/logs?limit=$limit'),
+        Uri.parse('$baseUrl/api/system/logs?limit=$limit'),
         headers: authHeaders,
       );
       _handle401(response.statusCode);
@@ -363,7 +398,7 @@ class ApiService {
   Future<bool> restartDvr() async {
     try {
       final response = await http.post(
-        Uri.parse('$_baseUrl/api/system/restart-dvr'),
+        Uri.parse('$baseUrl/api/system/restart-dvr'),
         headers: _headers,
       );
       return response.statusCode == 200;
@@ -375,7 +410,7 @@ class ApiService {
   Future<List<Map<String, dynamic>>> getCameraHealth() async {
     try {
       final response = await http.get(
-        Uri.parse('$_baseUrl/api/health/cameras'),
+        Uri.parse('$baseUrl/api/health/cameras'),
         headers: authHeaders,
       );
       _handle401(response.statusCode);
@@ -390,7 +425,7 @@ class ApiService {
   Future<bool> cleanupFaces() async {
     try {
       final response = await http.post(
-        Uri.parse('$_baseUrl/api/system/cleanup-faces'),
+        Uri.parse('$baseUrl/api/system/cleanup-faces'),
         headers: _headers,
       ).timeout(const Duration(seconds: 30));
       return response.statusCode == 200;
@@ -402,7 +437,7 @@ class ApiService {
   Future<Map<String, dynamic>?> runDiskBenchmark() async {
     try {
       final response = await http.post(
-        Uri.parse('$_baseUrl/api/system/disk-benchmark'),
+        Uri.parse('$baseUrl/api/system/disk-benchmark'),
         headers: _headers,
       ).timeout(const Duration(seconds: 30));
       _handle401(response.statusCode);
@@ -414,7 +449,7 @@ class ApiService {
   Future<Map<String, dynamic>?> formatStorage() async {
     try {
       final response = await http.post(
-        Uri.parse('$_baseUrl/api/system/format-storage'),
+        Uri.parse('$baseUrl/api/system/format-storage'),
         headers: _headers,
       ).timeout(const Duration(seconds: 30));
       _handle401(response.statusCode);
@@ -428,7 +463,7 @@ class ApiService {
   Future<Map<String, dynamic>?> getSettings() async {
     try {
       final response = await http.get(
-        Uri.parse('$_baseUrl/api/settings'),
+        Uri.parse('$baseUrl/api/settings'),
         headers: authHeaders,
       );
       _handle401(response.statusCode);
@@ -440,7 +475,7 @@ class ApiService {
   Future<bool> updateSettings(Map<String, dynamic> settings) async {
     try {
       final response = await http.post(
-        Uri.parse('$_baseUrl/api/settings'),
+        Uri.parse('$baseUrl/api/settings'),
         headers: {...authHeaders, 'Content-Type': 'application/json'},
         body: jsonEncode(settings),
       );
@@ -454,7 +489,7 @@ class ApiService {
   Future<Map<String, dynamic>?> testGemini() async {
     try {
       final response = await http.post(
-        Uri.parse('$_baseUrl/api/settings/test-gemini'),
+        Uri.parse('$baseUrl/api/settings/test-gemini'),
         headers: _headers,
       ).timeout(const Duration(seconds: 60));
       if (response.statusCode == 200) return jsonDecode(response.body);
@@ -465,7 +500,7 @@ class ApiService {
   Future<Map<String, dynamic>?> testAi() async {
     try {
       final response = await http.post(
-        Uri.parse('$_baseUrl/api/settings/test-ai'),
+        Uri.parse('$baseUrl/api/settings/test-ai'),
         headers: _headers,
       ).timeout(const Duration(seconds: 60));
       if (response.statusCode == 200) return jsonDecode(response.body);
@@ -476,7 +511,7 @@ class ApiService {
   Future<Map<String, dynamic>?> testTelegram() async {
     try {
       final response = await http.post(
-        Uri.parse('$_baseUrl/api/settings/test-telegram'),
+        Uri.parse('$baseUrl/api/settings/test-telegram'),
         headers: _headers,
       ).timeout(const Duration(seconds: 25));
       if (response.statusCode == 200) return jsonDecode(response.body);
@@ -489,7 +524,7 @@ class ApiService {
   Future<List<String>> getFamilyProfiles() async {
     try {
       final response = await http.get(
-        Uri.parse('$_baseUrl/api/system/family-profiles'),
+        Uri.parse('$baseUrl/api/system/family-profiles'),
         headers: authHeaders,
       );
       _handle401(response.statusCode);
@@ -507,7 +542,7 @@ class ApiService {
     try {
       final request = http.MultipartRequest(
         'POST',
-        Uri.parse('$_baseUrl/api/system/family-profiles/upload'),
+        Uri.parse('$baseUrl/api/system/family-profiles/upload'),
       );
       request.headers.addAll(authHeaders);
       request.fields['name'] = name;
@@ -524,7 +559,7 @@ class ApiService {
   Future<bool> deleteFamilyProfile(String filename) async {
     try {
       final response = await http.delete(
-        Uri.parse('$_baseUrl/api/system/family-profiles/$filename'),
+        Uri.parse('$baseUrl/api/system/family-profiles/$filename'),
         headers: authHeaders,
       );
       _handle401(response.statusCode);
@@ -535,7 +570,7 @@ class ApiService {
   }
 
   String getFamilyProfilePhotoUrl(String filename) {
-    return '$_baseUrl/api/system/family-profiles/photo/$filename?token=$_sessionToken';
+    return '$baseUrl/api/system/family-profiles/photo/$filename?token=$_sessionToken';
   }
 
   // ==================== SHARE LINKS ====================
@@ -543,7 +578,7 @@ class ApiService {
   Future<List<Map<String, dynamic>>> getShareLinks() async {
     try {
       final response = await http.get(
-        Uri.parse('$_baseUrl/api/shares'),
+        Uri.parse('$baseUrl/api/shares'),
         headers: authHeaders,
       );
       _handle401(response.statusCode);
@@ -565,7 +600,7 @@ class ApiService {
   }) async {
     try {
       final response = await http.post(
-        Uri.parse('$_baseUrl/api/shares/add'),
+        Uri.parse('$baseUrl/api/shares/add'),
         headers: {...authHeaders, 'Content-Type': 'application/json'},
         body: jsonEncode({
           'camera_id': cameraId,
@@ -588,7 +623,7 @@ class ApiService {
   Future<bool> deleteShareLink(int linkId) async {
     try {
       final response = await http.post(
-        Uri.parse('$_baseUrl/api/shares/$linkId/delete-json'),
+        Uri.parse('$baseUrl/api/shares/$linkId/delete-json'),
         headers: _headers,
       );
       _handle401(response.statusCode);

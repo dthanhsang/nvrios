@@ -33,6 +33,7 @@ class _ConfigScreenState extends State<ConfigScreen> with AutomaticKeepAliveClie
   final _promptCtrl = TextEditingController();
   final _tgBotTokenCtrl = TextEditingController();
   final _tgChatIdCtrl = TextEditingController();
+  final _localUrlCtrl = TextEditingController();
 
   @override
   bool get wantKeepAlive => true;
@@ -41,6 +42,7 @@ class _ConfigScreenState extends State<ConfigScreen> with AutomaticKeepAliveClie
   void initState() {
     super.initState();
     _tabController = TabController(length: 5, vsync: this);
+    _localUrlCtrl.text = _apiService.localUrl;
     _loadData();
   }
 
@@ -57,6 +59,7 @@ class _ConfigScreenState extends State<ConfigScreen> with AutomaticKeepAliveClie
     _promptCtrl.dispose();
     _tgBotTokenCtrl.dispose();
     _tgChatIdCtrl.dispose();
+    _localUrlCtrl.dispose();
     super.dispose();
   }
 
@@ -508,38 +511,136 @@ class _ConfigScreenState extends State<ConfigScreen> with AutomaticKeepAliveClie
     );
   }
 
-  Widget _buildCameraTab() {
-    if (_cameras.isEmpty) {
-      return const Center(child: Text('Chưa có camera nào', style: TextStyle(color: Colors.grey)));
+  Future<void> _saveLocalConnection() async {
+    final url = _localUrlCtrl.text.trim();
+    _apiService.setLocalUrl(url);
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Đang kiểm tra kết nối cục bộ...'), duration: Duration(seconds: 1)),
+    );
+    
+    await _apiService.detectActiveUrl();
+    
+    if (mounted) {
+      final isLocal = _apiService.baseUrl == _apiService.localUrl && _apiService.localUrl.isNotEmpty;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(isLocal 
+            ? '🚀 Kết nối cục bộ thành công!' 
+            : '🌐 Không kết nối được cục bộ. Đã chuyển sang Public Tunnel.'
+          ),
+          backgroundColor: isLocal ? Colors.green : Colors.orange,
+        ),
+      );
+      setState(() {});
     }
+  }
+
+  Widget _buildCameraTab() {
     return RefreshIndicator(
       onRefresh: _loadData,
-      child: ListView.builder(
+      child: ListView(
         padding: const EdgeInsets.all(8),
-        itemCount: _cameras.length,
-        itemBuilder: (context, i) {
-          final cam = _cameras[i];
-          return Card(
-            child: ListTile(
-              leading: Icon(
-                Icons.videocam,
-                color: cam.enabled ? const Color(0xFFFF3B30) : Colors.grey,
-              ),
-              title: Text(cam.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-              subtitle: Text(
-                '${cam.go2rtcSrc} • ${cam.protocol.toUpperCase()}',
-                style: const TextStyle(color: Colors.grey, fontSize: 11),
-              ),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
+        children: [
+          Card(
+            color: const Color(0xFF1E2330),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  IconButton(icon: const Icon(Icons.edit, size: 20), onPressed: () => _showCameraForm(camera: cam)),
-                  IconButton(icon: const Icon(Icons.delete, size: 20, color: Color(0xFFFF3B30)), onPressed: () => _deleteCamera(cam)),
+                  const Row(
+                    children: [
+                      Icon(Icons.wifi_find, color: Color(0xFFFF3B30)),
+                      SizedBox(width: 8),
+                      Text(
+                        'Kết nối cục bộ (Smart Fallback)',
+                        style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Nhập địa chỉ IP/URL nội bộ của đầu ghi (khi dùng chung Wifi). App sẽ tự động ưu tiên kết nối trực tiếp để load camera nhanh hơn và tiết kiệm băng thông.',
+                    style: TextStyle(color: Colors.grey, fontSize: 12),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _localUrlCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Local IP/URL',
+                            hintText: 'http://192.168.1.50:8020',
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          ),
+                          style: const TextStyle(color: Colors.white, fontSize: 14),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      ElevatedButton(
+                        onPressed: _saveLocalConnection,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFFF3B30),
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        ),
+                        child: const Text('Lưu'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  FutureBuilder(
+                    future: Future.value(_apiService.baseUrl),
+                    builder: (context, snapshot) {
+                      final activeUrl = _apiService.baseUrl;
+                      final isLocal = activeUrl == _apiService.localUrl && _apiService.localUrl.isNotEmpty;
+                      return Text(
+                        'Đang kết nối qua: $activeUrl (${isLocal ? "Cục bộ 🚀" : "Public Tunnel 🌐"})',
+                        style: TextStyle(
+                          color: isLocal ? Colors.green : Colors.orange,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      );
+                    },
+                  ),
                 ],
               ),
             ),
-          );
-        },
+          ),
+          const SizedBox(height: 8),
+          if (_cameras.isEmpty)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 40),
+                child: Text('Chưa có camera nào', style: TextStyle(color: Colors.grey)),
+              ),
+            ),
+          ..._cameras.map((cam) {
+            return Card(
+              child: ListTile(
+                leading: Icon(
+                  Icons.videocam,
+                  color: cam.enabled ? const Color(0xFFFF3B30) : Colors.grey,
+                ),
+                title: Text(cam.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                subtitle: Text(
+                  '${cam.go2rtcSrc} • ${cam.protocol.toUpperCase()}',
+                  style: const TextStyle(color: Colors.grey, fontSize: 11),
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(icon: const Icon(Icons.edit, size: 20), onPressed: () => _showCameraForm(camera: cam)),
+                    IconButton(icon: const Icon(Icons.delete, size: 20, color: Color(0xFFFF3B30)), onPressed: () => _deleteCamera(cam)),
+                  ],
+                ),
+              ),
+            );
+          }),
+        ],
       ),
     );
   }

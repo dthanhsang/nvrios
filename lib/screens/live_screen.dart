@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../services/api_service.dart';
 import '../models/camera.dart';
 
@@ -13,10 +15,10 @@ import '../models/camera.dart';
 class _GridCell {
   Camera? camera;
   bool isHd;
-  GlobalKey<_MjpegStreamPlayerState> streamKey;
+  GlobalKey<_LiveStreamPlayerState> streamKey;
 
   _GridCell({this.camera, this.isHd = false})
-      : streamKey = GlobalKey<_MjpegStreamPlayerState>();
+      : streamKey = GlobalKey<_LiveStreamPlayerState>();
 }
 
 // ==================== LIVE SCREEN ====================
@@ -236,7 +238,7 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
     final cell = _cells[cellIndex];
     if (cell.camera == null) return;
     final state = cell.streamKey.currentState;
-    if (state != null && state._currentFrame != null) {
+    if (state != null && state.currentFrame != null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Đã chụp: ${cell.camera!.name}'),
@@ -366,10 +368,15 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
             children: [
               Container(color: const Color(0xFF1C1C1E)),
               if (cell.camera != null) ...[
-                // MJPEG stream
-                MjpegStreamPlayer(
+                // WebRTC and Fallback MJPEG Stream
+                LiveStreamPlayer(
                   key: cell.streamKey,
+                  camera: cell.camera!,
                   streamUrl: _apiService.getMjpegStreamUrl(
+                    cell.camera!.go2rtcSrc,
+                    hd: cell.isHd,
+                  ),
+                  webrtcUrl: _apiService.getWebRtcWsUrl(
                     cell.camera!.go2rtcSrc,
                     hd: cell.isHd,
                   ),
@@ -650,7 +657,7 @@ class _FullscreenLiveViewState extends State<_FullscreenLiveView> {
   bool _showControls = true;
   bool _isHd = true;
   Timer? _hideTimer;
-  final _streamKey = GlobalKey<_MjpegStreamPlayerState>();
+  final _streamKey = GlobalKey<_LiveStreamPlayerState>();
 
   @override
   void initState() {
@@ -692,13 +699,23 @@ class _FullscreenLiveViewState extends State<_FullscreenLiveView> {
     return widget.apiService.getMjpegStreamUrl(widget.camera.go2rtcSrc, hd: _isHd);
   }
 
+  String get _currentWebRtcUrl {
+    return widget.apiService.getWebRtcWsUrl(widget.camera.go2rtcSrc, hd: _isHd);
+  }
+
   void _captureScreenshot() {
     final state = _streamKey.currentState;
-    if (state != null && state._currentFrame != null) {
-      // Save frame to gallery
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Đã chụp ảnh màn hình')),
-      );
+    if (state != null) {
+      if (state.currentFrame != null) {
+        // Save frame to gallery
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Đã chụp ảnh màn hình')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Không thể chụp ảnh từ luồng WebRTC thời gian thực')),
+        );
+      }
     }
     _startHideTimer();
   }
@@ -719,9 +736,11 @@ class _FullscreenLiveViewState extends State<_FullscreenLiveView> {
                 minScale: 1.0,
                 maxScale: 4.0,
                 child: Center(
-                  child: MjpegStreamPlayer(
+                  child: LiveStreamPlayer(
                     key: _streamKey,
+                    camera: widget.camera,
                     streamUrl: _currentStreamUrl,
+                    webrtcUrl: _currentWebRtcUrl,
                   ),
                 ),
               ),
@@ -1083,5 +1102,250 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> with AutomaticKee
       );
     }
     return const SizedBox.shrink();
+  }
+}
+
+// ==================== WEBRTC STREAM PLAYER ====================
+
+class WebRtcStreamPlayer extends StatefulWidget {
+  final String go2rtcUrl;
+  final VoidCallback onError;
+
+  const WebRtcStreamPlayer({
+    super.key,
+    required this.go2rtcUrl,
+    required this.onError,
+  });
+
+  @override
+  State<WebRtcStreamPlayer> createState() => _WebRtcStreamPlayerState();
+}
+
+class _WebRtcStreamPlayerState extends State<WebRtcStreamPlayer> {
+  final _renderer = RTCVideoRenderer();
+  RTCPeerConnection? _peerConnection;
+  WebSocket? _socket;
+  bool _isInitialized = false;
+  bool _hasError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initRenderer();
+  }
+
+  Future<void> _initRenderer() async {
+    try {
+      await _renderer.initialize();
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+        });
+        _connectWebRtc();
+      }
+    } catch (_) {
+      _handleError();
+    }
+  }
+
+  @override
+  void dispose() {
+    _cleanup();
+    _renderer.dispose();
+    super.dispose();
+  }
+
+  void _cleanup() {
+    _socket?.close();
+    _peerConnection?.close();
+    _peerConnection = null;
+  }
+
+  Future<void> _connectWebRtc() async {
+    try {
+      final wsUri = Uri.parse(widget.go2rtcUrl);
+      _socket = await WebSocket.connect(wsUri.toString()).timeout(const Duration(seconds: 4));
+      
+      _socket!.listen(
+        (message) {
+          _handleWsMessage(message);
+        },
+        onError: (err) {
+          _handleError();
+        },
+        onDone: () {
+          _handleError();
+        },
+      );
+
+      final configuration = {
+        'sdpSemantics': 'unified-plan',
+        'iceServers': [
+          {'urls': 'stun:stun.l.google.com:19302'}
+        ]
+      };
+
+      _peerConnection = await createPeerConnection(configuration);
+
+      await _peerConnection!.addTransceiver(
+        kind: RTCRtpMediaType.RTCRtpMediaTypeVideo,
+        init: RTCRtpTransceiverInit(direction: TransceiverDirection.RecvOnly),
+      );
+      await _peerConnection!.addTransceiver(
+        kind: RTCRtpMediaType.RTCRtpMediaTypeAudio,
+        init: RTCRtpTransceiverInit(direction: TransceiverDirection.RecvOnly),
+      );
+
+      _peerConnection!.onTrack = (RTCTrackEvent event) {
+        if (event.track.kind == 'video') {
+          if (mounted) {
+            setState(() {
+              _renderer.srcObject = event.streams[0];
+            });
+          }
+        }
+      };
+
+      _peerConnection!.onIceConnectionState = (RTCIceConnectionState state) {
+        if (state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
+            state == RTCIceConnectionState.RTCIceConnectionStateClosed) {
+          _handleError();
+        }
+      };
+
+      _peerConnection!.onIceCandidate = (RTCIceCandidate candidate) {
+        final msg = {
+          'type': 'webrtc/candidate',
+          'value': candidate.candidate,
+        };
+        _socket?.add(jsonEncode(msg));
+      };
+
+      final offer = await _peerConnection!.createOffer({
+        'offerToReceiveVideo': 1,
+        'offerToReceiveAudio': 1,
+      });
+      await _peerConnection!.setLocalDescription(offer);
+
+      final offerMsg = {
+        'type': 'webrtc/offer',
+        'value': offer.sdp,
+      };
+      _socket?.add(jsonEncode(offerMsg));
+
+    } catch (e) {
+      _handleError();
+    }
+  }
+
+  void _handleWsMessage(dynamic message) async {
+    try {
+      if (message is! String) return;
+      final data = jsonDecode(message);
+      final type = data['type'];
+      final value = data['value'];
+
+      if (type == 'webrtc/answer') {
+        final description = RTCSessionDescription(value, 'answer');
+        await _peerConnection?.setRemoteDescription(description);
+      } else if (type == 'webrtc/candidate') {
+        final candidate = RTCIceCandidate(value, '', 0);
+        await _peerConnection?.addCandidate(candidate);
+      }
+    } catch (e) {
+      _handleError();
+    }
+  }
+
+  void _handleError() {
+    if (_hasError) return;
+    _hasError = true;
+    _cleanup();
+    widget.onError();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_isInitialized || _renderer.srcObject == null) {
+      return const Center(
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFFF3B30)),
+        ),
+      );
+    }
+
+    return RTCVideoView(
+      _renderer,
+      objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+    );
+  }
+}
+
+// ==================== LIVE STREAM PLAYER (WEBRTC + FALLBACK MJPEG) ====================
+
+class LiveStreamPlayer extends StatefulWidget {
+  final String streamUrl;
+  final String webrtcUrl;
+  final Camera camera;
+
+  const LiveStreamPlayer({
+    super.key,
+    required this.streamUrl,
+    required this.webrtcUrl,
+    required this.camera,
+  });
+
+  @override
+  State<LiveStreamPlayer> createState() => _LiveStreamPlayerState();
+}
+
+class _LiveStreamPlayerState extends State<LiveStreamPlayer> with AutomaticKeepAliveClientMixin {
+  bool _useFallback = false;
+  final _mjpegKey = GlobalKey<_MjpegStreamPlayerState>();
+
+  Uint8List? get currentFrame {
+    if (_useFallback) {
+      return _mjpegKey.currentState?._currentFrame;
+    }
+    return null;
+  }
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void didUpdateWidget(LiveStreamPlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.webrtcUrl != widget.webrtcUrl) {
+      setState(() {
+        _useFallback = false;
+      });
+    }
+  }
+
+  void _handleWebRtcError() {
+    if (mounted) {
+      setState(() {
+        _useFallback = true;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    if (_useFallback) {
+      return MjpegStreamPlayer(
+        key: _mjpegKey,
+        streamUrl: widget.streamUrl,
+      );
+    }
+
+    return WebRtcStreamPlayer(
+      go2rtcUrl: widget.webrtcUrl,
+      onError: _handleWebRtcError,
+    );
   }
 }
