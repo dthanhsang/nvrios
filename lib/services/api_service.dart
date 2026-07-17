@@ -30,11 +30,17 @@ class ApiService {
     'Cookie': 'dvr_session=$_sessionToken',
     'X-DVR-Token': _sessionToken,
     'Content-Type': 'application/x-www-form-urlencoded',
+    'Bypass-Tunnel-Reminder': 'true',
+    'ngrok-skip-browser-warning': 'true',
+    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
   };
 
   Map<String, String> get authHeaders => {
     'Cookie': 'dvr_session=$_sessionToken',
     'X-DVR-Token': _sessionToken,
+    'Bypass-Tunnel-Reminder': 'true',
+    'ngrok-skip-browser-warning': 'true',
+    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
   };
 
   Future<void> init() async {
@@ -366,6 +372,30 @@ class ApiService {
     }
   }
 
+  Future<Map<String, dynamic>?> runDiskBenchmark() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/system/disk-benchmark'),
+        headers: _headers,
+      ).timeout(const Duration(seconds: 30));
+      _handle401(response.statusCode);
+      if (response.statusCode == 200) return jsonDecode(response.body);
+    } catch (_) {}
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> formatStorage() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/system/format-storage'),
+        headers: _headers,
+      ).timeout(const Duration(seconds: 30));
+      _handle401(response.statusCode);
+      if (response.statusCode == 200) return jsonDecode(response.body);
+    } catch (_) {}
+    return null;
+  }
+
   // ==================== SETTINGS ====================
 
   Future<Map<String, dynamic>?> getSettings() async {
@@ -398,6 +428,28 @@ class ApiService {
     try {
       final response = await http.post(
         Uri.parse('$_baseUrl/api/settings/test-gemini'),
+        headers: _headers,
+      ).timeout(const Duration(seconds: 60));
+      if (response.statusCode == 200) return jsonDecode(response.body);
+    } catch (_) {}
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> testAi() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/settings/test-ai'),
+        headers: _headers,
+      ).timeout(const Duration(seconds: 60));
+      if (response.statusCode == 200) return jsonDecode(response.body);
+    } catch (_) {}
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> testTelegram() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/settings/test-telegram'),
         headers: _headers,
       ).timeout(const Duration(seconds: 25));
       if (response.statusCode == 200) return jsonDecode(response.body);

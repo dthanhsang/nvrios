@@ -41,6 +41,9 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
   /// Currently selected cell index (for camera assignment)
   int? _selectedCellIndex;
 
+  int _currentPageIndex = 0;
+  final PageController _pageController = PageController();
+
   @override
   bool get wantKeepAlive => true;
 
@@ -51,51 +54,68 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
     _loadCameras();
   }
 
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
   /// Initialize cells for the current grid size.
   void _initCells() {
-    final count = _gridSize * _gridSize;
-    _cells = List.generate(count, (_) => _GridCell());
+    if (_gridSize == 1) {
+      _cells = [_GridCell(isHd: true)];
+    } else {
+      final count = _gridSize * _gridSize;
+      _cells = List.generate(count, (_) => _GridCell());
+    }
   }
 
   /// Change grid size, preserving existing camera assignments where possible.
   void _setGridSize(int size) {
     if (size == _gridSize) return;
-    final oldCells = _cells;
     _gridSize = size;
-    final newCount = size * size;
-
-    // Auto-quality: 1x1 = HD, multi = SD
-    final autoHd = size == 1;
-
-    _cells = List.generate(newCount, (i) {
-      if (i < oldCells.length) {
-        // Preserve existing assignment but update quality
-        return _GridCell(camera: oldCells[i].camera, isHd: autoHd);
-      }
-      return _GridCell(isHd: autoHd);
-    });
-
-    // If we shrunk, disconnect streams in removed cells (they'll be GC'd)
     _selectedCellIndex = null;
-    setState(() {});
-
-    // Auto-assign cameras to empty cells if cameras are loaded
-    if (_cameras.isNotEmpty) {
-      _autoAssignCameras();
+    _currentPageIndex = 0;
+    if (_pageController.hasClients) {
+      _pageController.jumpToPage(0);
     }
+
+    if (_gridSize == 1) {
+      if (_cameras.isEmpty) {
+        _cells = [_GridCell(isHd: true)];
+      } else {
+        _cells = List.generate(_cameras.length, (i) => _GridCell(camera: _cameras[i], isHd: true));
+      }
+    } else {
+      final newCount = size * size;
+      _cells = List.generate(newCount, (i) {
+        final cam = (i < _cameras.length) ? _cameras[i] : null;
+        return _GridCell(camera: cam, isHd: false);
+      });
+    }
+
+    setState(() {});
   }
 
   /// Auto-assign cameras to empty grid cells.
   void _autoAssignCameras() {
     final autoHd = _gridSize == 1;
-    int cameraIdx = 0;
-    for (int i = 0; i < _cells.length && cameraIdx < _cameras.length; i++) {
-      if (_cells[i].camera == null) {
-        _cells[i] = _GridCell(camera: _cameras[cameraIdx], isHd: autoHd);
-        cameraIdx++;
+    if (_gridSize == 1) {
+      if (_cameras.isEmpty) {
+        _cells = [_GridCell(isHd: true)];
       } else {
-        // Skip cameras already assigned
-        cameraIdx++;
+        _cells = List.generate(_cameras.length, (i) => _GridCell(camera: _cameras[i], isHd: true));
+      }
+    } else {
+      int cameraIdx = 0;
+      for (int i = 0; i < _cells.length && cameraIdx < _cameras.length; i++) {
+        if (_cells[i].camera == null) {
+          _cells[i] = _GridCell(camera: _cameras[cameraIdx], isHd: autoHd);
+          cameraIdx++;
+        } else {
+          // Skip cameras already assigned
+          cameraIdx++;
+        }
       }
     }
     setState(() {});
@@ -266,6 +286,21 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
   }
 
   Widget _buildGrid() {
+    if (_gridSize == 1) {
+      return ListView.builder(
+        itemCount: _cells.length,
+        itemBuilder: (context, index) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+            child: AspectRatio(
+              aspectRatio: 16 / 10,
+              child: _buildGridCell(index),
+            ),
+          );
+        },
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.all(4),
       child: GridView.builder(
@@ -912,9 +947,9 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> with AutomaticKee
       if (_disposed) return;
       if (mounted) setState(() => _connectProgress = 70);
 
-      // Parse multipart MJPEG stream
+      // Parse multipart MJPEG stream using SOI (0xFFD8) and EOI (0xFFD9) markers
+      // to guarantee robust rendering even over slow 4G/5G mobile networks
       List<int> buffer = [];
-      int? contentLength;
       bool receivedFirstChunk = false;
 
       await for (final chunk in response) {
@@ -925,39 +960,50 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> with AutomaticKee
         }
         buffer.addAll(chunk);
 
-        while (buffer.length > 2) {
-          if (contentLength == null) {
-            // Look for Content-Length header
-            final headerEnd = _findHeaderEnd(buffer);
-            if (headerEnd == -1) {
-              if (buffer.length > 4000) buffer = buffer.sublist(buffer.length - 2000);
+        while (buffer.length > 4) {
+          // Find JPEG Start of Image (SOI) marker
+          int startIdx = -1;
+          for (int i = 0; i < buffer.length - 1; i++) {
+            if (buffer[i] == 0xFF && buffer[i + 1] == 0xD8) {
+              startIdx = i;
               break;
-            }
-            final headerStr = String.fromCharCodes(buffer.sublist(0, headerEnd));
-            contentLength = _parseContentLength(headerStr);
-            buffer = buffer.sublist(headerEnd);
-            if (contentLength == null || contentLength <= 0 || contentLength > 5 * 1024 * 1024) {
-              contentLength = null;
-              continue;
             }
           }
 
-          // ignore: unnecessary_null_comparison
-          if (contentLength != null && buffer.length >= contentLength) {
-            final frameData = Uint8List.fromList(buffer.sublist(0, contentLength));
-            buffer = buffer.sublist(contentLength);
-            contentLength = null;
+          if (startIdx == -1) {
+            // Clear old buffer data if no start marker is found to prevent memory leaks
+            if (buffer.length > 8192) {
+              buffer = buffer.sublist(buffer.length - 1024);
+            }
+            break;
+          }
 
-            // Validate JPEG SOI marker
-            if (frameData.length > 2 && frameData[0] == 0xFF && frameData[1] == 0xD8) {
-              if (!_disposed && mounted) {
-                setState(() {
-                  _currentFrame = frameData;
-                  _retryCount = 0;
-                });
-              }
+          // Find JPEG End of Image (EOI) marker
+          int endIdx = -1;
+          for (int i = startIdx + 2; i < buffer.length - 1; i++) {
+            if (buffer[i] == 0xFF && buffer[i + 1] == 0xD9) {
+              endIdx = i + 2;
+              break;
+            }
+          }
+
+          if (endIdx != -1) {
+            final frameData = Uint8List.fromList(buffer.sublist(startIdx, endIdx));
+            buffer = buffer.sublist(endIdx);
+
+            if (!_disposed && mounted) {
+              setState(() {
+                _currentFrame = frameData;
+                _isConnecting = false;
+                _retryCount = 0;
+              });
             }
           } else {
+            // Start marker found but end marker not received yet, wait for more chunks.
+            // Clear if buffer gets ridiculously large without EOI
+            if (buffer.length > 5 * 1024 * 1024) {
+              buffer = [];
+            }
             break;
           }
         }
@@ -975,26 +1021,6 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> with AutomaticKee
         _retry();
       }
     }
-  }
-
-  int _findHeaderEnd(List<int> buffer) {
-    for (int i = 0; i < buffer.length - 3; i++) {
-      if (buffer[i] == 0x0D && buffer[i + 1] == 0x0A && buffer[i + 2] == 0x0D && buffer[i + 3] == 0x0A) {
-        return i + 4;
-      }
-    }
-    return -1;
-  }
-
-  int? _parseContentLength(String header) {
-    final lines = header.split('\n');
-    for (final line in lines) {
-      final lower = line.toLowerCase().trim();
-      if (lower.startsWith('content-length:')) {
-        return int.tryParse(lower.split(':').last.trim());
-      }
-    }
-    return null;
   }
 
   void _retry() {

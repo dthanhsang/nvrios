@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'screens/login_screen.dart';
 
@@ -27,11 +28,31 @@ class MyApp extends StatelessWidget {
         colorSchemeSeed: primaryColor,
         scaffoldBackgroundColor: const Color(0xFF0F1115),
         fontFamily: 'Roboto',
+        textTheme: ThemeData.dark().textTheme.apply(
+          fontFamily: 'Roboto',
+        ),
+        cupertinoOverrideTheme: const CupertinoThemeData(
+          primaryColor: primaryColor,
+          brightness: Brightness.dark,
+          scaffoldBackgroundColor: Color(0xFF0F1115),
+          textTheme: CupertinoTextThemeData(
+            textStyle: TextStyle(fontFamily: 'Roboto', color: Colors.white),
+            actionTextStyle: TextStyle(fontFamily: 'Roboto', color: primaryColor),
+            navTitleTextStyle: TextStyle(fontFamily: 'Roboto', color: Colors.white, fontWeight: FontWeight.bold),
+            navLargeTitleTextStyle: TextStyle(fontFamily: 'Roboto', color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+        ),
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFF161920),
           foregroundColor: Colors.white,
           elevation: 0,
           centerTitle: true,
+          titleTextStyle: TextStyle(
+            fontFamily: 'Roboto',
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
         ),
         cardTheme: CardTheme(
           color: const Color(0xFF1E2330),
@@ -55,6 +76,8 @@ class MyApp extends StatelessWidget {
             borderRadius: BorderRadius.circular(10),
             borderSide: const BorderSide(color: primaryColor),
           ),
+          labelStyle: const TextStyle(fontFamily: 'Roboto'),
+          hintStyle: const TextStyle(fontFamily: 'Roboto'),
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
@@ -62,6 +85,7 @@ class MyApp extends StatelessWidget {
             foregroundColor: Colors.white,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             padding: const EdgeInsets.symmetric(vertical: 14),
+            textStyle: const TextStyle(fontFamily: 'Roboto', fontWeight: FontWeight.bold),
           ),
         ),
         switchTheme: SwitchThemeData(

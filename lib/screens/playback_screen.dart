@@ -32,6 +32,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
   bool _isLoading = true;
   bool _isTranscoding = false;
   int _timelineZoom = 1; // 1=24h, 4=6h, 24=1h
+  bool _showAllVideos = false;
 
   // Video Player state
   VideoPlayerController? _videoPlayerController;
@@ -69,6 +70,45 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
     _videoPlayerController?.dispose();
     _videoPlayerController = null;
     _isPlayerInitialized = false;
+  }
+
+  Map<String, dynamic>? _findVideoForEvent(Map<String, dynamic> event) {
+    final timestampStr = event['timestamp'] as String? ?? '';
+    if (timestampStr.isEmpty) return null;
+    
+    DateTime? eventTime;
+    try {
+      eventTime = DateTime.parse(timestampStr);
+    } catch (_) {
+      final parts = timestampStr.split(' ');
+      final timePart = parts.length > 1 ? parts[1] : parts[0];
+      final timeParts = timePart.split(':');
+      if (timeParts.length >= 3) {
+        final now = DateTime.now();
+        eventTime = DateTime(
+          now.year, now.month, now.day,
+          int.parse(timeParts[0]),
+          int.parse(timeParts[1]),
+          int.parse(timeParts[2]),
+        );
+      }
+    }
+    
+    if (eventTime == null) return null;
+    final eventSeconds = eventTime.hour * 3600 + eventTime.minute * 60 + eventTime.second;
+
+    for (int i = 0; i < _videos.length; i++) {
+      final video = _videos[i];
+      final start = video.startSeconds;
+      final end = start + video.duration;
+      if (eventSeconds >= start && eventSeconds <= end) {
+        return {
+          'videoIndex': i,
+          'seekSeconds': eventSeconds - start,
+        };
+      }
+    }
+    return null;
   }
 
   void _videoPlayerListener() {
@@ -664,59 +704,163 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
             ),
           ),
 
-          // Video list
+          // Mode Selector Toolbar
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  _showAllVideos ? 'Tất cả bản ghi (24/24)' : 'Sự kiện phát hiện chuyển động',
+                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                ),
+                TextButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _showAllVideos = !_showAllVideos;
+                    });
+                  },
+                  icon: Icon(
+                    _showAllVideos ? Icons.event_note : Icons.video_library,
+                    size: 16,
+                    color: const Color(0xFFFF3B30),
+                  ),
+                  label: Text(
+                    _showAllVideos ? 'Xem theo sự kiện' : 'Xem toàn bộ 24/24',
+                    style: const TextStyle(color: Color(0xFFFF3B30), fontSize: 12),
+                  ),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    backgroundColor: const Color(0xFFFF3B30).withOpacity(0.1),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Video / Event list
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
-                : _videos.isEmpty
-                    ? const Center(child: Text('Không có video', style: TextStyle(color: Colors.grey)))
-                    : ListView.builder(
-                        itemCount: _videos.length,
-                        itemBuilder: (context, i) {
-                          final video = _videos[i];
-                          final isPlaying = i == _currentVideoIndex;
-                          return ListTile(
-                            dense: true,
-                            selected: isPlaying,
-                            selectedTileColor: const Color(0xFFFF3B30).withOpacity(0.1),
-                            leading: Icon(
-                              isPlaying ? Icons.play_circle_filled : Icons.play_circle_outline,
-                              color: isPlaying ? const Color(0xFFFF3B30) : Colors.grey,
-                              size: 28,
-                            ),
-                            title: Text(video.time, style: TextStyle(
-                              color: isPlaying ? const Color(0xFFFF3B30) : Colors.white,
-                              fontWeight: isPlaying ? FontWeight.bold : FontWeight.normal,
-                              fontSize: 14,
-                            )),
-                            subtitle: Text(
-                              '${_formatDuration(video.duration)} • ${video.sizeMb.toStringAsFixed(1)}MB',
-                              style: const TextStyle(color: Colors.grey, fontSize: 11),
-                            ),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                                  decoration: BoxDecoration(
-                                    color: video.isH264 ? Colors.blue.withOpacity(0.2) : Colors.purple.withOpacity(0.2),
-                                    borderRadius: BorderRadius.circular(3),
-                                  ),
-                                  child: Text(
-                                    video.codec.toUpperCase(),
-                                    style: TextStyle(
-                                      color: video.isH264 ? Colors.blue : Colors.purple,
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.bold,
+                : _showAllVideos
+                    ? (_videos.isEmpty
+                        ? const Center(child: Text('Không có video', style: TextStyle(color: Colors.grey)))
+                        : ListView.builder(
+                            itemCount: _videos.length,
+                            itemBuilder: (context, i) {
+                              final video = _videos[i];
+                              final isPlaying = i == _currentVideoIndex;
+                              return ListTile(
+                                dense: true,
+                                selected: isPlaying,
+                                selectedTileColor: const Color(0xFFFF3B30).withOpacity(0.1),
+                                leading: Icon(
+                                  isPlaying ? Icons.play_circle_filled : Icons.play_circle_outline,
+                                  color: isPlaying ? const Color(0xFFFF3B30) : Colors.grey,
+                                  size: 28,
+                                ),
+                                title: Text(video.time, style: TextStyle(
+                                  color: isPlaying ? const Color(0xFFFF3B30) : Colors.white,
+                                  fontWeight: isPlaying ? FontWeight.bold : FontWeight.normal,
+                                  fontSize: 14,
+                                )),
+                                subtitle: Text(
+                                  '${_formatDuration(video.duration)} • ${video.sizeMb.toStringAsFixed(1)}MB',
+                                  style: const TextStyle(color: Colors.grey, fontSize: 11),
+                                ),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                      decoration: BoxDecoration(
+                                        color: video.isH264 ? Colors.blue.withOpacity(0.2) : Colors.purple.withOpacity(0.2),
+                                        borderRadius: BorderRadius.circular(3),
+                                      ),
+                                      child: Text(
+                                        video.codec.toUpperCase(),
+                                        style: TextStyle(
+                                          color: video.isH264 ? Colors.blue : Colors.purple,
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
                                     ),
+                                  ],
+                                ),
+                                onTap: () => _playVideo(i),
+                              );
+                            },
+                          ))
+                    : (_events.isEmpty
+                        ? const Center(child: Text('Không có sự kiện chuyển động nào trong ngày này', style: TextStyle(color: Colors.grey)))
+                        : ListView.builder(
+                            itemCount: _events.length,
+                            itemBuilder: (context, i) {
+                              final event = _events[i];
+                              final timestampStr = event['timestamp'] as String? ?? '';
+                              String displayTime = timestampStr;
+                              if (timestampStr.contains(' ')) {
+                                displayTime = timestampStr.split(' ')[1];
+                              }
+                              final details = event['details'] as String? ?? 'Phát hiện chuyển động';
+                              final snapshotPath = event['snapshot_path'] as String?;
+                              
+                              bool isCurrentEvent = false;
+                              final mapping = _findVideoForEvent(event);
+                              if (mapping != null && _currentVideoIndex == mapping['videoIndex']) {
+                                final eventSec = mapping['seekSeconds'] as int;
+                                final currentSec = _videoPlayerController != null && _isPlayerInitialized
+                                    ? _videoPlayerController!.value.position.inSeconds
+                                    : 0;
+                                if ((currentSec - eventSec).abs() < 15) {
+                                  isCurrentEvent = true;
+                                }
+                              }
+
+                              return ListTile(
+                                dense: true,
+                                selected: isCurrentEvent,
+                                selectedTileColor: const Color(0xFFFF3B30).withOpacity(0.1),
+                                leading: ClipRRect(
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: snapshotPath != null && snapshotPath.isNotEmpty
+                                      ? Image.network(
+                                          '${_apiService.baseUrl}$snapshotPath',
+                                          headers: _apiService.authHeaders,
+                                          width: 50,
+                                          height: 38,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, __, ___) => const Icon(Icons.motion_photos_on, color: Colors.orange, size: 28),
+                                        )
+                                      : const Icon(Icons.motion_photos_on, color: Colors.orange, size: 28),
+                                ),
+                                title: Text(
+                                  '$displayTime - $details',
+                                  style: TextStyle(
+                                    color: isCurrentEvent ? const Color(0xFFFF3B30) : Colors.white,
+                                    fontWeight: isCurrentEvent ? FontWeight.bold : FontWeight.normal,
+                                    fontSize: 13,
                                   ),
                                 ),
-                              ],
-                            ),
-                            onTap: () => _playVideo(i),
-                          );
-                        },
-                      ),
+                                subtitle: Text(
+                                  'Loại: ${event['event_type'] ?? 'chuyển động'}',
+                                  style: const TextStyle(color: Colors.grey, fontSize: 11),
+                                ),
+                                trailing: const Icon(Icons.play_arrow, color: Colors.grey, size: 18),
+                                onTap: () {
+                                  if (mapping != null) {
+                                    _playVideo(mapping['videoIndex'] as int, seekSeconds: mapping['seekSeconds'] as int);
+                                  } else {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(content: Text('Không tìm thấy file video tương ứng')),
+                                    );
+                                  }
+                                },
+                              );
+                            },
+                          )),
           ),
         ],
       ),

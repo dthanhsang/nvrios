@@ -49,6 +49,12 @@ class VideoFile {
 
   bool get isH264 => codec.toLowerCase() == 'h264' || codec.toLowerCase() == 'avc';
   bool get isHevc => codec.toLowerCase() == 'hevc' || codec.toLowerCase() == 'h265';
-  bool get needsTranscode => !isH264 && !isHevc;
-  bool get canPlayDirect => isH264 || isHevc;
+  
+  bool get needsTranscode {
+    return !isH264 && !isHevc;
+  }
+
+  bool get canPlayDirect {
+    return isH264 || isHevc;
+  }
 }
