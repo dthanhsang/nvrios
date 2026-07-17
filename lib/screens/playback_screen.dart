@@ -40,6 +40,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
   double _currentPlaySeconds = 0;
   bool _isLoading = true;
   bool _isTranscoding = false;
+  int _transcodingProgress = 0;
   int _timelineZoom = 1; // 1=24h, 4=6h, 24=1h
   bool _showAllVideos = false;
 
@@ -239,21 +240,39 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
 
     // Check if transcoding needed
     if (video.needsTranscode && !video.hasCache) {
-      setState(() => _isTranscoding = true);
+      setState(() {
+        _isTranscoding = true;
+        _transcodingProgress = 0;
+      });
 
       // Trigger and poll transcoding
       for (int i = 0; i < 150; i++) {
         final status = await _apiService.checkPlaybackCache(
           _selectedCamera!.id, _selectedDate!, video.filename,
         );
-        if (status != null && status['status'] == 'ready') {
-          break;
+        if (status != null) {
+          if (status['status'] == 'ready') {
+            break;
+          }
+          if (status['status'] == 'transcoding') {
+            final progressVal = status['progress'] as int? ?? 0;
+            if (mounted) {
+              setState(() {
+                _transcodingProgress = progressVal;
+              });
+            }
+          }
         }
         await Future.delayed(const Duration(seconds: 2));
         if (!mounted) return;
       }
 
-      if (mounted) setState(() => _isTranscoding = false);
+      if (mounted) {
+        setState(() {
+          _isTranscoding = false;
+          _transcodingProgress = 0;
+        });
+      }
     }
 
     final videoUrl = video.needsTranscode
@@ -740,12 +759,12 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
           if (_isTranscoding) Container(
             padding: const EdgeInsets.all(8),
             color: const Color(0xFF1E2330),
-            child: const Row(
+            child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFFF3B30))),
-                SizedBox(width: 8),
-                Text('Đang chuyển đổi video...', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFFF3B30))),
+                const SizedBox(width: 8),
+                Text('Đang chuyển đổi video: $_transcodingProgress% ...', style: const TextStyle(color: Colors.grey, fontSize: 12)),
               ],
             ),
           ),

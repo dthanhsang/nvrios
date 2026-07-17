@@ -7,6 +7,7 @@ class VideoFile {
   final String codec;
   final String pixFmt;
   final bool hasCache;
+  final bool needsTranscode;
   final String directUrl;
   final String? cacheUrl;
   final String transcodeUrl;
@@ -22,6 +23,7 @@ class VideoFile {
     required this.codec,
     required this.pixFmt,
     required this.hasCache,
+    required this.needsTranscode,
     required this.directUrl,
     this.cacheUrl,
     required this.transcodeUrl,
@@ -30,15 +32,20 @@ class VideoFile {
   });
 
   factory VideoFile.fromJson(Map<String, dynamic> json) {
+    final codecVal = json['codec'] as String? ?? 'unknown';
+    final isH264 = codecVal.toLowerCase() == 'h264' || codecVal.toLowerCase() == 'avc';
+    final defaultNeedsTranscode = !isH264;
+
     return VideoFile(
       filename: json['filename'] as String? ?? '',
       time: json['time'] as String? ?? '',
       startSeconds: json['start_seconds'] as int? ?? 0,
       duration: (json['duration'] as num?)?.toDouble() ?? 0.0,
       sizeMb: (json['size_mb'] as num?)?.toDouble() ?? 0.0,
-      codec: json['codec'] as String? ?? 'unknown',
+      codec: codecVal,
       pixFmt: json['pix_fmt'] as String? ?? '',
       hasCache: json['has_cache'] as bool? ?? false,
+      needsTranscode: json['needs_transcode'] as bool? ?? defaultNeedsTranscode,
       directUrl: json['direct_url'] as String? ?? '',
       cacheUrl: json['cache_url'] as String?,
       transcodeUrl: json['transcode_url'] as String? ?? '',
@@ -49,12 +56,8 @@ class VideoFile {
 
   bool get isH264 => codec.toLowerCase() == 'h264' || codec.toLowerCase() == 'avc';
   bool get isHevc => codec.toLowerCase() == 'hevc' || codec.toLowerCase() == 'h265';
-  
-  bool get needsTranscode {
-    return !isH264 && !isHevc;
-  }
 
   bool get canPlayDirect {
-    return isH264 || isHevc;
+    return !needsTranscode;
   }
 }
