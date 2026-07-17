@@ -287,49 +287,17 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
 
   Widget _buildGrid() {
     if (_gridSize == 1) {
-      return Column(
-        children: [
-          Expanded(
-            child: PageView.builder(
-              controller: _pageController,
-              itemCount: _cells.length,
-              onPageChanged: (index) {
-                setState(() {
-                  _currentPageIndex = index;
-                });
-              },
-              itemBuilder: (context, index) {
-                return Padding(
-                  padding: const EdgeInsets.all(4),
-                  child: AspectRatio(
-                    aspectRatio: 16 / 10,
-                    child: _buildGridCell(index),
-                  ),
-                );
-              },
+      return ListView.builder(
+        itemCount: _cells.length,
+        itemBuilder: (context, index) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+            child: AspectRatio(
+              aspectRatio: 16 / 10,
+              child: _buildGridCell(index),
             ),
-          ),
-          if (_cells.length > 1)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(_cells.length, (index) {
-                  return Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: _currentPageIndex == index
-                          ? const Color(0xFFFF3B30)
-                          : Colors.grey.withOpacity(0.5),
-                    ),
-                  );
-                }),
-              ),
-            ),
-        ],
+          );
+        },
       );
     }
 

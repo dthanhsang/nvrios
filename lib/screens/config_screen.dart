@@ -24,6 +24,8 @@ class _ConfigScreenState extends State<ConfigScreen> with AutomaticKeepAliveClie
   final _aiApiKeyCtrl = TextEditingController();
   final _aiModelCtrl = TextEditingController();
   final _promptCtrl = TextEditingController();
+  final _tgBotTokenCtrl = TextEditingController();
+  final _tgChatIdCtrl = TextEditingController();
 
   @override
   bool get wantKeepAlive => true;
@@ -31,7 +33,7 @@ class _ConfigScreenState extends State<ConfigScreen> with AutomaticKeepAliveClie
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     _loadData();
   }
 
@@ -46,6 +48,8 @@ class _ConfigScreenState extends State<ConfigScreen> with AutomaticKeepAliveClie
     _aiApiKeyCtrl.dispose();
     _aiModelCtrl.dispose();
     _promptCtrl.dispose();
+    _tgBotTokenCtrl.dispose();
+    _tgChatIdCtrl.dispose();
     super.dispose();
   }
 
@@ -65,6 +69,8 @@ class _ConfigScreenState extends State<ConfigScreen> with AutomaticKeepAliveClie
         _aiApiKeyCtrl.text = _settings['ai_api_key'] ?? '';
         _aiModelCtrl.text = _settings['ai_model'] ?? 'gemini/gemini-3.1-flash-lite-preview';
         _promptCtrl.text = _settings['ai_prompt'] ?? '';
+        _tgBotTokenCtrl.text = _settings['telegram_bot_token'] ?? '';
+        _tgChatIdCtrl.text = _settings['telegram_chat_id'] ?? '';
         _isLoading = false;
       });
     }
@@ -187,6 +193,7 @@ class _ConfigScreenState extends State<ConfigScreen> with AutomaticKeepAliveClie
           tabs: const [
             Tab(text: 'Camera'),
             Tab(text: 'AI'),
+            Tab(text: 'Telegram'),
           ],
         ),
       ),
@@ -197,6 +204,7 @@ class _ConfigScreenState extends State<ConfigScreen> with AutomaticKeepAliveClie
             children: [
               _buildCameraTab(),
               _buildAiTab(),
+              _buildTelegramTab(),
             ],
           ),
       floatingActionButton: AnimatedBuilder(
@@ -464,11 +472,88 @@ class _ConfigScreenState extends State<ConfigScreen> with AutomaticKeepAliveClie
     _settings['gemini_api_key'] = _geminiKeyCtrl.text;
     _settings['gemini_model'] = _geminiModelCtrl.text;
     _settings['ai_prompt'] = _promptCtrl.text;
+    _settings['telegram_bot_token'] = _tgBotTokenCtrl.text;
+    _settings['telegram_chat_id'] = _tgChatIdCtrl.text;
     final ok = await _apiService.updateSettings(_settings);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(ok ? 'Đã lưu cấu hình AI' : 'Lỗi khi lưu cấu hình AI')),
+        SnackBar(content: Text(ok ? 'Đã lưu cấu hình' : 'Lỗi khi lưu cấu hình')),
       );
     }
+  }
+
+  Widget _buildTelegramTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Card(
+            color: const Color(0xFF1E2330),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Telegram Bot Alert', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _tgBotTokenCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Telegram Bot Token',
+                      hintText: 'Nhập bot token từ BotFather',
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _tgChatIdCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Telegram Chat ID',
+                      hintText: 'Nhập ID nhóm hoặc ID chat cá nhân',
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            onPressed: () async {
+              await _saveAiSettings();
+              final result = await _apiService.testTelegram();
+              if (mounted) {
+                showDialog(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    backgroundColor: const Color(0xFF1E2330),
+                    title: Text(result?['status'] == 'success' ? '✅ Thành công' : '❌ Thất bại', style: const TextStyle(color: Colors.white)),
+                    content: Text(result?['message'] ?? 'Không thể kết nối hoặc cấu hình sai', style: const TextStyle(color: Colors.grey)),
+                    actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+                  ),
+                );
+              }
+            },
+            icon: const Icon(Icons.send, size: 16),
+            label: const Text('Gửi tin nhắn test Telegram'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+          ),
+          const SizedBox(height: 12),
+          ElevatedButton.icon(
+            onPressed: _saveAiSettings,
+            icon: const Icon(Icons.save, size: 18),
+            label: const Text('Lưu cấu hình'),
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
