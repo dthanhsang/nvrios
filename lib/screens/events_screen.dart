@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../models/camera.dart';
 import '../models/face_event.dart';
+import 'playback_screen.dart';
 
 class EventsScreen extends StatefulWidget {
   const EventsScreen({super.key});
@@ -79,6 +80,44 @@ class _EventsScreenState extends State<EventsScreen> with AutomaticKeepAliveClie
             if (event.details != null) Padding(
               padding: const EdgeInsets.only(left: 12, right: 12, bottom: 12),
               child: Text(event.details!, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(left: 12, right: 12, bottom: 16),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    
+                    // Trích xuất ngày YYYY-MM-DD từ timestamp (ví dụ "2026-07-17 14:32:05")
+                    String? datePart;
+                    if (event.timestamp.isNotEmpty) {
+                      final parts = event.timestamp.trim().split(' ');
+                      if (parts.isNotEmpty) {
+                        datePart = parts[0];
+                      }
+                    }
+                    
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => PlaybackScreen(
+                          initialCameraId: event.cameraId,
+                          initialDate: datePart,
+                          initialEventTimestamp: event.timestamp,
+                        ),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.play_circle_fill, color: Colors.white),
+                  label: const Text('Xem video phát lại', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFF3B30),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                ),
+              ),
             ),
           ],
         ),

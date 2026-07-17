@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/api_service.dart';
@@ -948,8 +949,9 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> with AutomaticKee
       if (mounted) setState(() => _connectProgress = 70);
 
       // Parse multipart MJPEG stream using SOI (0xFFD8) and EOI (0xFFD9) markers
-      // to guarantee robust rendering even over slow 4G/5G mobile networks
-      List<int> buffer = [];
+      // with memory optimizations (BytesBuilder & zero-copy Uint8List views)
+      // to reduce GC pressure and CPU overhead on iOS devices.
+      final builder = BytesBuilder(copy: false);
       bool receivedFirstChunk = false;
 
       await for (final chunk in response) {
@@ -958,7 +960,9 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> with AutomaticKee
           receivedFirstChunk = true;
           if (mounted) setState(() => _connectProgress = 90);
         }
-        buffer.addAll(chunk);
+        builder.add(chunk);
+
+        Uint8List buffer = builder.takeBytes();
 
         while (buffer.length > 4) {
           // Find JPEG Start of Image (SOI) marker
@@ -988,7 +992,8 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> with AutomaticKee
           }
 
           if (endIdx != -1) {
-            final frameData = Uint8List.fromList(buffer.sublist(startIdx, endIdx));
+            // Use zero-copy sublistView to feed image directly to rendering memory
+            final frameData = Uint8List.sublistView(buffer, startIdx, endIdx);
             buffer = buffer.sublist(endIdx);
 
             if (!_disposed && mounted) {
@@ -1002,10 +1007,14 @@ class _MjpegStreamPlayerState extends State<MjpegStreamPlayer> with AutomaticKee
             // Start marker found but end marker not received yet, wait for more chunks.
             // Clear if buffer gets ridiculously large without EOI
             if (buffer.length > 5 * 1024 * 1024) {
-              buffer = [];
+              buffer = Uint8List(0);
             }
             break;
           }
+        }
+
+        if (buffer.isNotEmpty) {
+          builder.add(buffer);
         }
       }
 

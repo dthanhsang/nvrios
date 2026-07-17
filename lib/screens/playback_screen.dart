@@ -12,7 +12,16 @@ import '../models/camera.dart';
 import '../models/video_file.dart';
 
 class PlaybackScreen extends StatefulWidget {
-  const PlaybackScreen({super.key});
+  final int? initialCameraId;
+  final String? initialDate;
+  final String? initialEventTimestamp;
+
+  const PlaybackScreen({
+    super.key,
+    this.initialCameraId,
+    this.initialDate,
+    this.initialEventTimestamp,
+  });
 
   @override
   State<PlaybackScreen> createState() => _PlaybackScreenState();
@@ -33,6 +42,8 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
   bool _isTranscoding = false;
   int _timelineZoom = 1; // 1=24h, 4=6h, 24=1h
   bool _showAllVideos = false;
+
+  bool _hasAutoPlayedEvent = false;
 
   // Video Player state
   VideoPlayerController? _videoPlayerController;
@@ -150,13 +161,32 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
     if (mounted) {
       setState(() {
         _cameras = cameras.where((c) => c.enabled).toList();
-        if (_cameras.isNotEmpty && _selectedCamera == null) {
-          _selectedCamera = _cameras.first;
-          _selectedDate = DateFormat('yyyy-MM-dd').format(DateTime.now());
-          _loadDatesAndVideos();
+        
+        // Ưu tiên camera truyền vào từ constructor
+        if (widget.initialCameraId != null) {
+          final found = _cameras.firstWhere(
+            (c) => c.id == widget.initialCameraId,
+            orElse: () => _cameras.isNotEmpty ? _cameras.first : Camera(id: -1, name: '', enabled: false, rtspUrl: '', rtspUrlSub: '', go2rtcSrc: '', protocol: 'tcp'),
+          );
+          if (found.id != -1) {
+            _selectedCamera = found;
+          }
         }
+        
+        if (_selectedCamera == null && _cameras.isNotEmpty) {
+          _selectedCamera = _cameras.first;
+        }
+
+        // Ưu tiên ngày truyền vào từ constructor
+        if (widget.initialDate != null) {
+          _selectedDate = widget.initialDate;
+        } else {
+          _selectedDate = DateFormat('yyyy-MM-dd').format(DateTime.now());
+        }
+
         _isLoading = false;
       });
+      _loadDatesAndVideos();
     }
   }
 
@@ -181,6 +211,22 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
         _currentVideoIndex = -1;
         _currentPlaySeconds = 0;
       });
+
+      // Tự động phát video chứa sự kiện nếu có initialEventTimestamp
+      if (widget.initialEventTimestamp != null && !_hasAutoPlayedEvent && _videos.isNotEmpty) {
+        _hasAutoPlayedEvent = true;
+        final eventMap = {'timestamp': widget.initialEventTimestamp};
+        final match = _findVideoForEvent(eventMap);
+        if (match != null) {
+          final int videoIdx = match['videoIndex'] as int;
+          final double seekSec = match['seekSeconds'] as double;
+          // Lùi lại 5 giây để người dùng xem trước ngữ cảnh của sự kiện
+          final startSeek = (seekSec - 5).clamp(0.0, _videos[videoIdx].duration.toDouble()).toInt();
+          
+          // Phát video
+          _playVideo(videoIdx, seekSeconds: startSeek);
+        }
+      }
     }
   }
 
