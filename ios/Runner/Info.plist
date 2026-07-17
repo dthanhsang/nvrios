@@ -63,5 +63,9 @@
 	</array>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Sử dụng Face ID để đăng nhập nhanh vào ứng dụng WebDVR</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Ứng dụng cần truy cập máy ảnh để chụp hình thành viên gia đình cho nhận diện khuôn mặt.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Ứng dụng cần truy cập thư viện ảnh để chọn hình thành viên gia đình cho nhận diện khuôn mặt.</string>
 </dict>
 </plist>

@@ -456,4 +456,122 @@ class ApiService {
     } catch (_) {}
     return null;
   }
+
+  // ==================== FAMILY PROFILES ====================
+
+  Future<List<String>> getFamilyProfiles() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/api/system/family-profiles'),
+        headers: authHeaders,
+      );
+      _handle401(response.statusCode);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data is Map && data['profiles'] is List) {
+          return (data['profiles'] as List).cast<String>();
+        }
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  Future<bool> uploadFamilyProfile(String filePath, String name) async {
+    try {
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$_baseUrl/api/system/family-profiles/upload'),
+      );
+      request.headers.addAll(authHeaders);
+      request.fields['name'] = name;
+      request.files.add(await http.MultipartFile.fromPath('file', filePath));
+      
+      final response = await request.send();
+      _handle401(response.statusCode);
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> deleteFamilyProfile(String filename) async {
+    try {
+      final response = await http.delete(
+        Uri.parse('$_baseUrl/api/system/family-profiles/$filename'),
+        headers: authHeaders,
+      );
+      _handle401(response.statusCode);
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  String getFamilyProfilePhotoUrl(String filename) {
+    return '$_baseUrl/api/system/family-profiles/photo/$filename?token=$_sessionToken';
+  }
+
+  // ==================== SHARE LINKS ====================
+
+  Future<List<Map<String, dynamic>>> getShareLinks() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/api/shares'),
+        headers: authHeaders,
+      );
+      _handle401(response.statusCode);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data is Map && data['shares'] is List) {
+          return (data['shares'] as List).cast<Map<String, dynamic>>();
+        }
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  Future<bool> createShareLink({
+    required int cameraId,
+    required String password,
+    required int expiresDays,
+    required int allowPlayback,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/shares/add'),
+        headers: {...authHeaders, 'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'camera_id': cameraId,
+          'password': password,
+          'expires_days': expiresDays,
+          'allow_playback': allowPlayback,
+        }),
+      );
+      _handle401(response.statusCode);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['status'] == 'success';
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> deleteShareLink(int linkId) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/shares/$linkId/delete-json'),
+        headers: _headers,
+      );
+      _handle401(response.statusCode);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['status'] == 'success';
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
 }
