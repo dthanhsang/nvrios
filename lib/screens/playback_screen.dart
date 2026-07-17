@@ -804,7 +804,23 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
                               if (timestampStr.contains(' ')) {
                                 displayTime = timestampStr.split(' ')[1];
                               }
-                              final details = event['details'] as String? ?? 'Phát hiện chuyển động';
+                              final rawDetails = event['details'] as String? ?? 'Phát hiện chuyển động';
+                              // Extract short summary from AI markdown details
+                              String details = rawDetails;
+                              if (rawDetails.contains('ALERT_STRANGER')) {
+                                details = '⚠️ Người lạ - Cảnh báo';
+                              } else if (rawDetails.contains('FAMILY')) {
+                                final familyMatch = RegExp(r'FAMILY:\s*(.+)', caseSensitive: false).firstMatch(rawDetails);
+                                details = familyMatch != null ? '🏠 ${familyMatch.group(1)!.trim()}' : '🏠 Thành viên gia đình';
+                                if (details.length > 60) details = '${details.substring(0, 60)}...';
+                              } else if (rawDetails.contains('NORMAL')) {
+                                details = '✅ Người đi đường';
+                              } else if (rawDetails.length > 60) {
+                                // Truncate long AI analysis to first meaningful line
+                                final lines = rawDetails.split(RegExp(r'[\n#]+'));
+                                details = lines.firstWhere((l) => l.trim().length > 5, orElse: () => rawDetails).trim();
+                                if (details.length > 60) details = '${details.substring(0, 60)}...';
+                              }
                               final snapshotPath = event['snapshot_path'] as String?;
                               
                               bool isCurrentEvent = false;
@@ -838,6 +854,8 @@ class _PlaybackScreenState extends State<PlaybackScreen> with AutomaticKeepAlive
                                 ),
                                 title: Text(
                                   '$displayTime - $details',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
                                     color: isCurrentEvent ? const Color(0xFFFF3B30) : Colors.white,
                                     fontWeight: isCurrentEvent ? FontWeight.bold : FontWeight.normal,
