@@ -124,7 +124,7 @@ class ApiService {
         body: 'username=${Uri.encodeComponent(username)}&password=${Uri.encodeComponent(password)}',
       );
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
         if (data['success'] == true && data['token'] != null) {
           _sessionToken = data['token'];
           _userRole = data['role'] ?? 'viewer';
@@ -176,7 +176,7 @@ class ApiService {
       );
       _handle401(response.statusCode);
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
         _userRole = data['role'] ?? 'viewer';
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('userRole', _userRole);
@@ -205,7 +205,7 @@ class ApiService {
       );
       _handle401(response.statusCode);
       if (response.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(response.body);
+        final List<dynamic> data = jsonDecode(utf8.decode(response.bodyBytes));
         return data.map((j) => Camera.fromJson(j)).toList();
       }
     } catch (_) {}
@@ -263,7 +263,7 @@ class ApiService {
       );
       _handle401(response.statusCode);
       if (response.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(response.body);
+        final List<dynamic> data = jsonDecode(utf8.decode(response.bodyBytes));
         return data.cast<String>();
       }
     } catch (_) {}
@@ -278,7 +278,7 @@ class ApiService {
       );
       _handle401(response.statusCode);
       if (response.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(response.body);
+        final List<dynamic> data = jsonDecode(utf8.decode(response.bodyBytes));
         return data.map((j) => VideoFile.fromJson(j)).toList();
       }
     } catch (_) {}
@@ -293,7 +293,7 @@ class ApiService {
       );
       _handle401(response.statusCode);
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
         if (data is List) return data.cast<Map<String, dynamic>>();
         if (data is Map && data['events'] is List) return (data['events'] as List).cast<Map<String, dynamic>>();
       }
@@ -309,7 +309,7 @@ class ApiService {
       );
       _handle401(response.statusCode);
       if (response.statusCode == 200 || response.statusCode == 202) {
-        return jsonDecode(response.body);
+        return jsonDecode(utf8.decode(response.bodyBytes));
       }
     } catch (_) {}
     return null;
@@ -354,7 +354,7 @@ class ApiService {
       final response = await http.get(Uri.parse(url), headers: authHeaders);
       _handle401(response.statusCode);
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
         List<dynamic> items;
         if (data is List) {
           items = data;
@@ -378,7 +378,7 @@ class ApiService {
         headers: authHeaders,
       );
       _handle401(response.statusCode);
-      if (response.statusCode == 200) return jsonDecode(response.body);
+      if (response.statusCode == 200) return jsonDecode(utf8.decode(response.bodyBytes));
     } catch (_) {}
     return null;
   }
@@ -390,7 +390,7 @@ class ApiService {
         headers: authHeaders,
       );
       _handle401(response.statusCode);
-      if (response.statusCode == 200) return response.body;
+      if (response.statusCode == 200) return utf8.decode(response.bodyBytes);
     } catch (_) {}
     return '';
   }
@@ -415,7 +415,7 @@ class ApiService {
       );
       _handle401(response.statusCode);
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
         if (data is List) return data.cast<Map<String, dynamic>>();
       }
     } catch (_) {}
@@ -441,7 +441,7 @@ class ApiService {
         headers: _headers,
       ).timeout(const Duration(seconds: 30));
       _handle401(response.statusCode);
-      if (response.statusCode == 200) return jsonDecode(response.body);
+      if (response.statusCode == 200) return jsonDecode(utf8.decode(response.bodyBytes));
     } catch (_) {}
     return null;
   }
@@ -453,7 +453,7 @@ class ApiService {
         headers: _headers,
       ).timeout(const Duration(seconds: 30));
       _handle401(response.statusCode);
-      if (response.statusCode == 200) return jsonDecode(response.body);
+      if (response.statusCode == 200) return jsonDecode(utf8.decode(response.bodyBytes));
     } catch (_) {}
     return null;
   }
@@ -467,7 +467,7 @@ class ApiService {
         headers: authHeaders,
       );
       _handle401(response.statusCode);
-      if (response.statusCode == 200) return jsonDecode(response.body);
+      if (response.statusCode == 200) return jsonDecode(utf8.decode(response.bodyBytes));
     } catch (_) {}
     return null;
   }
@@ -492,7 +492,7 @@ class ApiService {
         Uri.parse('$baseUrl/api/settings/test-gemini'),
         headers: _headers,
       ).timeout(const Duration(seconds: 60));
-      if (response.statusCode == 200) return jsonDecode(response.body);
+      if (response.statusCode == 200) return jsonDecode(utf8.decode(response.bodyBytes));
     } catch (_) {}
     return null;
   }
@@ -503,7 +503,7 @@ class ApiService {
         Uri.parse('$baseUrl/api/settings/test-ai'),
         headers: _headers,
       ).timeout(const Duration(seconds: 60));
-      if (response.statusCode == 200) return jsonDecode(response.body);
+      if (response.statusCode == 200) return jsonDecode(utf8.decode(response.bodyBytes));
     } catch (_) {}
     return null;
   }
@@ -514,7 +514,7 @@ class ApiService {
         Uri.parse('$baseUrl/api/settings/test-telegram'),
         headers: _headers,
       ).timeout(const Duration(seconds: 25));
-      if (response.statusCode == 200) return jsonDecode(response.body);
+      if (response.statusCode == 200) return jsonDecode(utf8.decode(response.bodyBytes));
     } catch (_) {}
     return null;
   }
@@ -529,7 +529,7 @@ class ApiService {
       );
       _handle401(response.statusCode);
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
         if (data is Map && data['profiles'] is List) {
           return (data['profiles'] as List).cast<String>();
         }
@@ -583,7 +583,7 @@ class ApiService {
       );
       _handle401(response.statusCode);
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
         if (data is Map && data['shares'] is List) {
           return (data['shares'] as List).cast<Map<String, dynamic>>();
         }
@@ -611,7 +611,7 @@ class ApiService {
       );
       _handle401(response.statusCode);
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
         return data['status'] == 'success';
       }
       return false;
@@ -628,7 +628,7 @@ class ApiService {
       );
       _handle401(response.statusCode);
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
         return data['status'] == 'success';
       }
       return false;

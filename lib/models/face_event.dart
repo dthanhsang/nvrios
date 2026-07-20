@@ -18,11 +18,28 @@ class FaceEvent {
     if (imageUrl.startsWith('/')) {
       imageUrl = '$baseUrl$imageUrl';
     }
+
+    int? parsedCameraId;
+    if (json['camera_id'] != null) {
+      if (json['camera_id'] is int) {
+        parsedCameraId = json['camera_id'] as int;
+      } else {
+        parsedCameraId = int.tryParse(json['camera_id'].toString());
+      }
+    }
+
+    String timestamp = json['timestamp'] as String? ?? '';
+    if (timestamp.isEmpty && json['date'] != null && json['time'] != null) {
+      timestamp = '${json['date']} ${json['time']}';
+    } else if (timestamp.isEmpty) {
+      timestamp = json['time'] as String? ?? '';
+    }
+
     return FaceEvent(
       imageUrl: imageUrl,
       cameraName: json['camera_name'] as String? ?? 'Camera ${json['camera_id'] ?? '?'}',
-      cameraId: json['camera_id'] as int?,
-      timestamp: json['timestamp'] as String? ?? json['time'] as String? ?? '',
+      cameraId: parsedCameraId,
+      timestamp: timestamp,
       details: json['details'] as String?,
     );
   }

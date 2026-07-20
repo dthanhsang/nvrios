@@ -44,7 +44,6 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
   /// Currently selected cell index (for camera assignment)
   int? _selectedCellIndex;
 
-  int _currentPageIndex = 0;
   final PageController _pageController = PageController();
 
   @override
@@ -76,9 +75,9 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
   /// Change grid size, preserving existing camera assignments where possible.
   void _setGridSize(int size) {
     if (size == _gridSize) return;
+    final oldCells = List<_GridCell>.from(_cells);
     _gridSize = size;
     _selectedCellIndex = null;
-    _currentPageIndex = 0;
     if (_pageController.hasClients) {
       _pageController.jumpToPage(0);
     }
@@ -87,13 +86,28 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
       if (_cameras.isEmpty) {
         _cells = [_GridCell(isHd: true)];
       } else {
-        _cells = List.generate(_cameras.length, (i) => _GridCell(camera: _cameras[i], isHd: true));
+        _cells = List.generate(_cameras.length, (i) {
+          final cam = _cameras[i];
+          final existingCell = oldCells.firstWhere(
+            (c) => c.camera?.id == cam.id,
+            orElse: () => _GridCell(camera: cam, isHd: true),
+          );
+          existingCell.isHd = true;
+          return existingCell;
+        });
       }
     } else {
       final newCount = size * size;
       _cells = List.generate(newCount, (i) {
         final cam = (i < _cameras.length) ? _cameras[i] : null;
-        return _GridCell(camera: cam, isHd: false);
+        if (cam != null) {
+          return oldCells.firstWhere(
+            (c) => c.camera?.id == cam.id,
+            orElse: () => _GridCell(camera: cam, isHd: false),
+          );
+        } else {
+          return _GridCell(isHd: false);
+        }
       });
     }
 
@@ -443,11 +457,6 @@ class _LiveScreenState extends State<LiveScreen> with AutomaticKeepAliveClientMi
                     onTap: () {
                       setState(() {
                         cell.isHd = !cell.isHd;
-                        // Force stream key refresh
-                        _cells[index] = _GridCell(
-                          camera: cell.camera,
-                          isHd: cell.isHd,
-                        );
                       });
                     },
                     child: Container(
@@ -1132,6 +1141,15 @@ class _WebRtcStreamPlayerState extends State<WebRtcStreamPlayer> {
   void initState() {
     super.initState();
     _initRenderer();
+  }
+
+  @override
+  void didUpdateWidget(WebRtcStreamPlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.go2rtcUrl != widget.go2rtcUrl) {
+      _cleanup();
+      _connectWebRtc();
+    }
   }
 
   Future<void> _initRenderer() async {
