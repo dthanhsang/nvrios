@@ -13,11 +13,18 @@ class DiscoverScreen extends StatefulWidget {
 
 class _DiscoverScreenState extends State<DiscoverScreen> {
   final _api = ApiService();
+  final _subnetController = TextEditingController();
   bool _isScanning = false;
   bool _hasScanned = false;
   String? _scanSubnet;
   String? _localIp;
   List<_DiscoveredCamera> _discovered = [];
+
+  @override
+  void dispose() {
+    _subnetController.dispose();
+    super.dispose();
+  }
 
   Future<void> _startScan() async {
     setState(() {
@@ -27,9 +34,13 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     });
 
     try {
+      final customSubnet = _subnetController.text.trim();
       final resp = await http.post(
         Uri.parse('${_api.baseUrl}/api/cameras/discover'),
         headers: {..._api.authHeaders, 'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'subnet': customSubnet.isEmpty ? null : customSubnet,
+        }),
       ).timeout(const Duration(seconds: 60));
 
       if (resp.statusCode == 200) {
@@ -196,6 +207,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
             padding: const EdgeInsets.all(16),
             color: const Color(0xFF1E2330),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
@@ -214,6 +226,34 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                         ],
                       ),
                     ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: 40,
+                        child: TextField(
+                          controller: _subnetController,
+                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                          decoration: InputDecoration(
+                            hintText: 'Subnet tùy chỉnh (vd: 192.168.1.x)',
+                            hintStyle: TextStyle(color: Colors.grey[600], fontSize: 12),
+                            enabledBorder: OutlineInputBorder(
+                              borderSide: BorderSide(color: Colors.grey[800]!),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderSide: const BorderSide(color: Color(0xFF007AFF)),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
                     ElevatedButton.icon(
                       onPressed: _isScanning ? null : _startScan,
                       icon: _isScanning
@@ -428,6 +468,6 @@ class _DiscoveredCamera {
     name: json['name'] as String? ?? '',
     manufacturer: json['manufacturer'] as String? ?? '',
     source: json['source'] as String? ?? '',
-    rtspUrls: (json['rtsp_urls'] as List?)?.map((e) => e.toString()).toList() ?? [],
+    rtspUrls: (json['rtsp_candidates'] as List? ?? json['rtsp_urls'] as List?)?.map((e) => e.toString()).toList() ?? [],
   );
 }

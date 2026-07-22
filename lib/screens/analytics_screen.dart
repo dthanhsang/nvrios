@@ -27,6 +27,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> with AutomaticKeepAli
 
   bool _isLoading = true;
   bool _isOffline = false;
+  bool _isLoadingAiSummary = false;
 
   // Data
   Map<String, dynamic> _summary = {};
@@ -166,6 +167,87 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> with AutomaticKeepAli
     }
   }
 
+  Future<void> _generateAiSummary() async {
+    setState(() => _isLoadingAiSummary = true);
+    final dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
+    try {
+      final url = '${_api.baseUrl}/api/analytics/ai-summary?${_camParam()}&date=$dateStr';
+      final resp = await http.get(Uri.parse(url), headers: _api.authHeaders).timeout(const Duration(seconds: 45));
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(resp.bodyBytes));
+        final summary = data['summary'] as String? ?? 'Không có nội dung tóm tắt.';
+        if (mounted) {
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              backgroundColor: const Color(0xFF1E2330),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: const Row(
+                children: [
+                  Icon(Icons.psychology, color: Color(0xFF5856D6)),
+                  SizedBox(width: 8),
+                  Text('Báo cáo an ninh AI', style: TextStyle(color: Colors.white, fontSize: 16)),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Text(summary, style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.4)),
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Đóng')),
+              ],
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Lỗi tải báo cáo: Server trả về ${resp.statusCode}')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Lỗi kết nối AI: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingAiSummary = false);
+    }
+  }
+
+  Future<void> _exportCsv() async {
+    final dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
+    try {
+      final url = '${_api.baseUrl}/api/analytics/export-csv?${_camParam()}&date=$dateStr';
+      final resp = await http.get(Uri.parse(url), headers: _api.authHeaders).timeout(const Duration(seconds: 15));
+      if (resp.statusCode == 200) {
+        final csvContent = utf8.decode(resp.bodyBytes);
+        await Clipboard.setData(ClipboardData(text: csvContent));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              backgroundColor: Color(0xFF34C759),
+              content: Text('📊 Đã xuất dữ liệu CSV và sao chép vào Clipboard thành công!'),
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Lỗi xuất CSV: Server trả về ${resp.statusCode}')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Lỗi kết nối xuất CSV: $e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -197,6 +279,40 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> with AutomaticKeepAli
 
                 // Summary cards
                 _summaryCards(),
+                const SizedBox(height: 12),
+
+                // AI Summary & CSV Actions
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: _isLoadingAiSummary ? null : _generateAiSummary,
+                        icon: _isLoadingAiSummary
+                          ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.psychology, size: 18, color: Colors.white),
+                        label: Text(_isLoadingAiSummary ? 'Đang tạo...' : 'Báo cáo AI', style: const TextStyle(fontSize: 13, color: Colors.white)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF5856D6),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: _exportCsv,
+                        icon: const Icon(Icons.download, size: 18, color: Colors.white),
+                        label: const Text('Xuất CSV', style: TextStyle(fontSize: 13, color: Colors.white)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF34C759),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 20),
 
                 // Hourly bar chart

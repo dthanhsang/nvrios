@@ -8,7 +8,6 @@ import 'health_screen.dart';
 import 'login_screen.dart';
 import 'analytics_screen.dart';
 import 'ai_chat_screen.dart';
-import 'floorplan_screen.dart';
 import 'discover_screen.dart';
 
 class MainScreen extends StatefulWidget {
@@ -32,7 +31,6 @@ class _MainScreenState extends State<MainScreen> {
   static const _moreMenuItems = [
     _MoreItem(icon: Icons.bar_chart, label: 'Thống kê', color: Color(0xFF007AFF)),
     _MoreItem(icon: Icons.smart_toy, label: 'AI Chat', color: Color(0xFF5856D6)),
-    _MoreItem(icon: Icons.map, label: 'Sơ đồ nhà', color: Color(0xFF34C759)),
     _MoreItem(icon: Icons.radar, label: 'Tìm camera', color: Color(0xFFFF9500)),
     _MoreItem(icon: Icons.settings, label: 'Cấu hình', color: Color(0xFF8E8E93)),
     _MoreItem(icon: Icons.monitor_heart, label: 'Hệ thống', color: Color(0xFFFF3B30)),
@@ -42,10 +40,9 @@ class _MainScreenState extends State<MainScreen> {
     switch (index) {
       case 0: return const AnalyticsScreen();
       case 1: return const AiChatScreen();
-      case 2: return const FloorplanScreen();
-      case 3: return const DiscoverScreen();
-      case 4: return const ConfigScreen();
-      case 5: return const HealthScreen();
+      case 2: return const DiscoverScreen();
+      case 3: return const ConfigScreen();
+      case 4: return const HealthScreen();
       default: return const SizedBox.shrink();
     }
   }

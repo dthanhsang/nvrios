@@ -2,6 +2,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../services/api_service.dart';
+import '../models/camera.dart';
+import 'live_screen.dart';
+import 'playback_screen.dart';
 
 class AiChatScreen extends StatefulWidget {
   const AiChatScreen({super.key});
@@ -16,6 +19,7 @@ class _AiChatScreenState extends State<AiChatScreen> with AutomaticKeepAliveClie
   final _scrollController = ScrollController();
   final _focusNode = FocusNode();
   bool _isLoading = false;
+  List<Camera> _cameras = [];
 
   final List<_ChatMessage> _messages = [];
 
@@ -29,6 +33,23 @@ class _AiChatScreenState extends State<AiChatScreen> with AutomaticKeepAliveClie
 
   @override
   bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCameras();
+  }
+
+  Future<void> _loadCameras() async {
+    try {
+      final cams = await _api.getCameras();
+      if (mounted) {
+        setState(() {
+          _cameras = cams;
+        });
+      }
+    } catch (_) {}
+  }
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -66,6 +87,9 @@ class _AiChatScreenState extends State<AiChatScreen> with AutomaticKeepAliveClie
           ?.map((e) => Map<String, dynamic>.from(e))
           .toList() ?? [];
         final queryInfo = data['query_info'] as Map<String, dynamic>?;
+        final suggestedActions = (data['suggested_actions'] as List?)
+          ?.map((e) => Map<String, dynamic>.from(e))
+          .toList() ?? [];
 
         setState(() {
           _messages.add(_ChatMessage(
@@ -73,6 +97,7 @@ class _AiChatScreenState extends State<AiChatScreen> with AutomaticKeepAliveClie
             isUser: false,
             events: events,
             queryInfo: queryInfo,
+            suggestedActions: suggestedActions,
           ));
         });
       } else {
@@ -95,6 +120,113 @@ class _AiChatScreenState extends State<AiChatScreen> with AutomaticKeepAliveClie
     } finally {
       setState(() => _isLoading = false);
       _scrollToBottom();
+    }
+  }
+
+  void _handleSuggestedAction(Map<String, dynamic> action) {
+    final type = action['type'] as String?;
+    final cameraId = action['camera_id'];
+    final cameraName = action['camera_name'] as String? ?? 'Camera';
+    
+    Camera? targetCam;
+    if (cameraId != null) {
+      final idInt = int.tryParse(cameraId.toString());
+      if (idInt != null) {
+        try {
+          targetCam = _cameras.firstWhere((c) => c.id == idInt);
+        } catch (_) {}
+      }
+    }
+    if (targetCam == null && cameraName.isNotEmpty) {
+      try {
+        targetCam = _cameras.firstWhere(
+          (c) => c.name.toLowerCase() == cameraName.toLowerCase()
+        );
+      } catch (_) {}
+    }
+
+    if (type == 'view_live') {
+      if (targetCam == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Không tìm thấy thông tin cấu hình cho $cameraName')),
+        );
+        return;
+      }
+      
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF1E2330),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Trực tiếp: ${targetCam!.name}', style: const TextStyle(color: Colors.white, fontSize: 16)),
+              IconButton(
+                icon: const Icon(Icons.close, color: Colors.white70),
+                onPressed: () => Navigator.pop(ctx),
+              ),
+            ],
+          ),
+          contentPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: 240,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: LiveStreamPlayer(
+                streamUrl: _api.getMjpegStreamUrl(targetCam.go2rtcSrc, hd: false),
+                webrtcUrl: _api.getWebRtcWsUrl(targetCam.go2rtcSrc, hd: false),
+                camera: targetCam,
+              ),
+            ),
+          ),
+        ),
+      );
+    } else if (type == 'view_playback') {
+      if (targetCam == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Không tìm thấy thông tin cấu hình cho $cameraName')),
+        );
+        return;
+      }
+      final date = action['date'] as String? ?? DateTime.now().toString().substring(0, 10);
+      final timestamp = action['timestamp'] as String?;
+      
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PlaybackScreen(
+            initialCameraId: targetCam!.id,
+            initialDate: date,
+            initialEventTimestamp: timestamp,
+          ),
+        ),
+      );
+    } else if (type == 'trigger_siren') {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF1E2330),
+          title: const Text('Kích hoạt còi báo động', style: TextStyle(color: Colors.white)),
+          content: Text('Bạn có chắc chắn muốn kích hoạt còi báo động tại $cameraName?', style: const TextStyle(color: Colors.grey)),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Hủy')),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    backgroundColor: const Color(0xFFFF3B30),
+                    content: Text('🚨 Đã kích hoạt còi báo động tại $cameraName thành công!'),
+                  ),
+                );
+              },
+              child: const Text('Kích hoạt', style: TextStyle(color: Color(0xFFFF3B30))),
+            ),
+          ],
+        ),
+      );
     }
   }
 
@@ -241,6 +373,51 @@ class _AiChatScreenState extends State<AiChatScreen> with AutomaticKeepAliveClie
                     ),
                   ),
                 ),
+
+                // Suggested Actions
+                if (!isUser && msg.suggestedActions.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: msg.suggestedActions.map((act) {
+                      final title = act['title'] as String? ?? 'Hành động';
+                      IconData icon = Icons.touch_app;
+                      Color iconColor = const Color(0xFF007AFF);
+                      if (act['type'] == 'view_live') {
+                        icon = Icons.videocam;
+                        iconColor = const Color(0xFF34C759);
+                      } else if (act['type'] == 'view_playback') {
+                        icon = Icons.replay;
+                        iconColor = const Color(0xFFFF9500);
+                      } else if (act['type'] == 'trigger_siren') {
+                        icon = Icons.campaign;
+                        iconColor = const Color(0xFFFF3B30);
+                      }
+                      
+                      return InkWell(
+                        onTap: () => _handleSuggestedAction(act),
+                        borderRadius: BorderRadius.circular(20),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF2A2F3D),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: iconColor.withOpacity(0.4)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(icon, size: 14, color: iconColor),
+                              const SizedBox(width: 4),
+                              Text(title, style: TextStyle(color: iconColor, fontSize: 11, fontWeight: FontWeight.w600)),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ],
 
                 // Query info badge
                 if (msg.queryInfo != null) ...[
@@ -430,6 +607,7 @@ class _ChatMessage {
   final bool isError;
   final List<Map<String, dynamic>> events;
   final Map<String, dynamic>? queryInfo;
+  final List<Map<String, dynamic>> suggestedActions;
 
   _ChatMessage({
     required this.text,
@@ -437,5 +615,6 @@ class _ChatMessage {
     this.isError = false,
     this.events = const [],
     this.queryInfo,
+    this.suggestedActions = const [],
   });
 }
