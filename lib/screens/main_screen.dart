@@ -6,6 +6,10 @@ import 'events_screen.dart';
 import 'config_screen.dart';
 import 'health_screen.dart';
 import 'login_screen.dart';
+import 'analytics_screen.dart';
+import 'ai_chat_screen.dart';
+import 'floorplan_screen.dart';
+import 'discover_screen.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -21,20 +25,48 @@ class _MainScreenState extends State<MainScreen> {
 
   bool get _isAdmin => _apiService.userRole == 'admin';
 
+  // Index for the "More" tab's sub-screen, -1 means show the grid
+  int _moreSubIndex = -1;
+
+  // Admin "More" menu items
+  static const _moreMenuItems = [
+    _MoreItem(icon: Icons.bar_chart, label: 'Thống kê', color: Color(0xFF007AFF)),
+    _MoreItem(icon: Icons.smart_toy, label: 'AI Chat', color: Color(0xFF5856D6)),
+    _MoreItem(icon: Icons.map, label: 'Sơ đồ nhà', color: Color(0xFF34C759)),
+    _MoreItem(icon: Icons.radar, label: 'Tìm camera', color: Color(0xFFFF9500)),
+    _MoreItem(icon: Icons.settings, label: 'Cấu hình', color: Color(0xFF8E8E93)),
+    _MoreItem(icon: Icons.monitor_heart, label: 'Hệ thống', color: Color(0xFFFF3B30)),
+  ];
+
+  Widget _moreSubScreen(int index) {
+    switch (index) {
+      case 0: return const AnalyticsScreen();
+      case 1: return const AiChatScreen();
+      case 2: return const FloorplanScreen();
+      case 3: return const DiscoverScreen();
+      case 4: return const ConfigScreen();
+      case 5: return const HealthScreen();
+      default: return const SizedBox.shrink();
+    }
+  }
+
   List<Widget> get _allowedScreens {
     if (_isAdmin) {
-      return const [
-        LiveScreen(),
-        PlaybackScreen(),
-        EventsScreen(),
-        ConfigScreen(),
-        HealthScreen(),
+      return [
+        const LiveScreen(),
+        const PlaybackScreen(),
+        const EventsScreen(),
+        // "More" tab — shows a grid or a selected sub-screen
+        _moreSubIndex >= 0
+          ? _moreSubScreen(_moreSubIndex)
+          : _moreGrid(),
       ];
     } else {
       return const [
         LiveScreen(),
         PlaybackScreen(),
         EventsScreen(),
+        AiChatScreen(),
       ];
     }
   }
@@ -45,16 +77,56 @@ class _MainScreenState extends State<MainScreen> {
         BottomNavigationBarItem(icon: Icon(Icons.videocam), label: 'Trực tiếp'),
         BottomNavigationBarItem(icon: Icon(Icons.replay), label: 'Xem lại'),
         BottomNavigationBarItem(icon: Icon(Icons.face), label: 'Sự kiện'),
-        BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Cấu hình'),
-        BottomNavigationBarItem(icon: Icon(Icons.monitor_heart), label: 'Hệ thống'),
+        BottomNavigationBarItem(icon: Icon(Icons.apps), label: 'Thêm'),
       ];
     } else {
       return const [
         BottomNavigationBarItem(icon: Icon(Icons.videocam), label: 'Trực tiếp'),
         BottomNavigationBarItem(icon: Icon(Icons.replay), label: 'Xem lại'),
         BottomNavigationBarItem(icon: Icon(Icons.face), label: 'Sự kiện'),
+        BottomNavigationBarItem(icon: Icon(Icons.smart_toy), label: 'AI Chat'),
       ];
     }
+  }
+
+  Widget _moreGrid() {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Tiện ích')),
+      body: GridView.builder(
+        padding: const EdgeInsets.all(20),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          crossAxisSpacing: 16,
+          mainAxisSpacing: 16,
+          childAspectRatio: 1.0,
+        ),
+        itemCount: _moreMenuItems.length,
+        itemBuilder: (ctx, i) {
+          final item = _moreMenuItems[i];
+          return GestureDetector(
+            onTap: () => setState(() => _moreSubIndex = i),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 52, height: 52,
+                  decoration: BoxDecoration(
+                    color: item.color.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(item.icon, color: item.color, size: 26),
+                ),
+                const SizedBox(height: 8),
+                Text(item.label,
+                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
   }
 
   @override
@@ -95,6 +167,15 @@ class _MainScreenState extends State<MainScreen> {
         return;
       }
       _lastLiveTap = now;
+    }
+    // Reset "More" sub-screen when tapping "More" tab again
+    if (_isAdmin && index == 3 && _currentIndex == 3 && _moreSubIndex >= 0) {
+      setState(() => _moreSubIndex = -1);
+      return;
+    }
+    if (_isAdmin && index == 3) {
+      setState(() { _currentIndex = index; _moreSubIndex = -1; });
+      return;
     }
     setState(() => _currentIndex = index);
   }
@@ -170,10 +251,7 @@ class _MainScreenState extends State<MainScreen> {
     final safeIndex = _currentIndex.clamp(0, screens.length - 1);
 
     return Scaffold(
-      body: IndexedStack(
-        index: safeIndex,
-        children: screens,
-      ),
+      body: screens[safeIndex],
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: safeIndex,
         onTap: _onTabTapped,
@@ -182,4 +260,11 @@ class _MainScreenState extends State<MainScreen> {
       ),
     );
   }
+}
+
+class _MoreItem {
+  final IconData icon;
+  final String label;
+  final Color color;
+  const _MoreItem({required this.icon, required this.label, required this.color});
 }
